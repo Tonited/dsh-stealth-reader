@@ -1,0 +1,43 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: 安装依赖
+        run: pnpm install --frozen-lockfile
+
+      # 先构建再测试：test/bundle.test.mjs 直接执行 lib/client.js（产物契约测试），
+      # 不先构建就会读到陈旧或缺失的产物。
+      - name: 类型检查 + 构建 + 测试
+        run: pnpm run check
+
+      # lib/ 是**提交进仓库**的（见 README「为什么 lib/ 进版本库」）。
+      # 源码改了却忘了重新构建，会让人从 git 装到旧产物 —— 这里把它变成硬失败。
+      - name: 产物体检（lib/ 必须与源码同步）
+        run: |
+          if ! git diff --quiet -- lib; then
+            echo "::error::lib/ 与源码不同步。请在本地跑 pnpm run build 并提交产物。"
+            git --no-pager diff --stat -- lib
+            exit 1
+          fi

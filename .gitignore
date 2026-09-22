@@ -1,0 +1,9 @@
+node_modules/
+.pnpm-store/
+*.log
+.DS_Store
+
+# lib/ 是**提交进版本库**的构建产物，不要加到这里。
+# DSH 插件从 git 安装时不应跑构建脚本（DSH-Store 的自动上架门槛明确要求
+# 「无生命周期脚本」），所以 .dsh/profiles 里的安装直接消费仓库中的 lib/。
+# 详见 README「为什么 lib/ 进版本库」。

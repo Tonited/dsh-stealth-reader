@@ -1,0 +1,4 @@
+# dsh-stealth-reader bundle patch —— 把本插件挂载进 profile 的 loader 树。
+- insert:
+    - id: dsh-stealth-reader
+      name: dsh-stealth-reader

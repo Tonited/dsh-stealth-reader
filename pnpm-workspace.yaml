@@ -1,0 +1,4 @@
+# esbuild 的 postinstall 只是可选优化（二进制已随包提供），但 pnpm 会因未审批的
+# 构建脚本让 `pnpm install` 退出码非零，进而让 `pnpm run <script>` 的依赖状态检查失败。
+allowBuilds:
+  esbuild: true
