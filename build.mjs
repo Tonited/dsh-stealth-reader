@@ -10,7 +10,8 @@
 import { build, context } from 'esbuild'
 import { mkdir, writeFile } from 'node:fs/promises'
 import { dirname, resolve } from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
+import { Script } from 'node:vm'
 
 const ROOT = dirname(fileURLToPath(import.meta.url))
 const PKG_ID = 'dsh-stealth-reader'
@@ -103,7 +104,10 @@ function bindRequireSlot(bundleSource) {
     `var __require = (x) => ${REQUIRE_SLOT}(x);`,
   )
   try {
-    new Function(patched)
+    // 只解析、不执行：语法错误必须在构建期炸掉，而不是产出坏 bundle 让浏览器里
+    // "加载成功但什么都没注册"。用 vm.Script 而非 new Function —— 两者都只做解析，
+    // 但前者不会顺手在当前 realm 里造出一个可调用的函数对象。
+    new Script(patched)
   } catch (error) {
     throw new Error(`rewritten bundle is not valid JS: ${error.message}`)
   }
@@ -151,7 +155,7 @@ async function emitClient() {
   console.log(`[build] lib/client.js  ${source.length} bytes (bundled)`)
 }
 
-async function main() {
+export async function main() {
   await mkdir(resolve(ROOT, 'lib'), { recursive: true })
 
   if (!watch) {
@@ -169,7 +173,15 @@ async function main() {
   console.log('[build] watching src/client/** …')
 }
 
-main().catch((error) => {
-  console.error('[build] failed:', error)
-  process.exit(1)
-})
+// 只在被**直接执行**时自动跑。deploy.mjs 会 import 本模块再自己调用 main()，
+// 那一次 process.argv[1] 指向 deploy.mjs，于是这里不会重复构建。
+const invokedDirectly =
+  process.argv[1] !== undefined &&
+  import.meta.url === pathToFileURL(resolve(process.argv[1])).href
+
+if (invokedDirectly) {
+  main().catch((error) => {
+    console.error('[build] failed:', error)
+    process.exit(1)
+  })
+}

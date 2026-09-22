@@ -5,14 +5,16 @@
 // **profile 里那份** lib/client.js 的 mtime/size —— 不回流就不会热替换。
 //
 // 用法：node deploy.mjs   （或 pnpm run deploy）
-import { execFile } from 'node:child_process'
+//
+// 直接 import build.mjs 调用，而不是 spawn 一个 `node build.mjs` 子进程：
+// 少一次进程启动，构建报错也带着原始堆栈直接抛上来，不必再去解析 stderr。
 import { copyFile, mkdir, stat } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { promisify } from 'node:util'
 
-const run = promisify(execFile)
+import { main as build } from './build.mjs'
+
 const ROOT = dirname(fileURLToPath(import.meta.url))
 
 const DSH_HOME = process.env.DSH_HOME ?? join(homedir(), '.dsh')
@@ -21,7 +23,7 @@ const TARGET = join(DSH_HOME, 'profiles', PROFILE, 'node_modules', 'dsh-stealth-
 
 async function main() {
   console.log('[deploy] 构建…')
-  await run(process.execPath, [resolve(ROOT, 'build.mjs')], { cwd: ROOT })
+  await build()
 
   await mkdir(join(TARGET, 'lib'), { recursive: true })
   const files = ['client.js', 'index.js']
@@ -38,6 +40,6 @@ async function main() {
 }
 
 main().catch((error) => {
-  console.error('[deploy] 失败:', error.stderr ?? error.message ?? error)
+  console.error('[deploy] 失败:', error.message ?? error)
   process.exit(1)
 })
