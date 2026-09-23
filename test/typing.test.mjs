@@ -13,7 +13,10 @@ import assert from 'node:assert/strict'
 
 import {
   DEFAULT_TEMPO,
+  FAST_FORWARD,
+  advanceClock,
   charsAt,
+  extendFastForward,
   lineDuration,
   scheduleDuration,
   typingSchedule,
@@ -139,4 +142,59 @@ test('charsAt：单调不减、不越界、非法时间不炸', () => {
   assert.equal(charsAt(slots, -100), 0)
   assert.equal(charsAt(slots, Number.NaN), 0)
   assert.equal(charsAt(slots, 999999), total, '跑完就停在结尾')
+})
+
+// ---------------------------------------------------------------- 快进
+//
+// 需求是"按住 Shift + 方向键时快速显示内容"。这里钉住的不是"跳了多少字"，
+// 而是"时钟走多快" —— 因为快进必须仍然逐行长出来，整段蹦出来会立刻露馅。
+
+test('快进：重复按键只会把到期时刻往后推，不会被更早的一次缩短', () => {
+  const first = extendFastForward(1000, 0)
+  assert.equal(first, 1000 + FAST_FORWARD.windowMs, '第一次按键从当下算起')
+
+  // 关键性质：取 max。手上的重复来得密时，新算出来的到期时刻可能反而更早，
+  // 那一下绝不能把已经承诺出去的那一段削短。
+  assert.equal(extendFastForward(1200, 3000), 3000, '算出来更早就不动它')
+  assert.equal(
+    extendFastForward(2000, first),
+    2000 + FAST_FORWARD.windowMs,
+    '算出来更晚就继续往后推 —— 这正是"按住"能持续快进的原因',
+  )
+})
+
+test('advanceClock：不快进就是实时，快进按倍率走', () => {
+  assert.equal(advanceClock(0, 50, false, 10000), 50)
+  assert.equal(advanceClock(0, 50, true, 10000), 50 * FAST_FORWARD.rate)
+  assert.equal(advanceClock(0, 50, true, 10000, 3), 150, '倍率可注入（也便于测试）')
+})
+
+test('advanceClock：单调不减、不为负、不越过分章结尾', () => {
+  assert.equal(advanceClock(500, 50, false, 10000), 550, '正常递增')
+  assert.equal(advanceClock(500, -100, false, 10000), 500, '负数步长也不倒退')
+  assert.equal(advanceClock(100, 50, true, 1000), 700, '快进不会跳出 duration')
+  assert.equal(advanceClock(9900, 50, true, 10000), 10000, '正好封顶在 duration')
+  assert.equal(advanceClock(0, 50, true, 0), 0, '空章节不越界')
+})
+
+test('advanceClock：倍率下限是 1，不会被 0 或负数冻住', () => {
+  assert.equal(advanceClock(0, 50, true, 10000, 0), 50)
+  assert.equal(advanceClock(0, 50, true, 10000, -5), 50)
+})
+
+test('快进仍然逐字：它把时钟提前，而不是一次性把全章吐出来', () => {
+  const lines = [{ chars: 40 }, { chars: 40 }, { chars: 40 }, { chars: 40 }]
+  const slots = typingSchedule(lines, 0, DEFAULT_TEMPO)
+  const duration = scheduleDuration(slots)
+  const totalChars = slots[slots.length - 1].endChars
+
+  // 一个 tick（100ms）里：不快进是正常速度，快进走 12 倍。
+  const slow = charsAt(slots, advanceClock(0, 100, false, duration))
+  const fast = charsAt(slots, advanceClock(0, 100, true, duration))
+
+  assert.ok(fast > slow, '快进确实走得更远')
+  assert.ok(
+    fast < totalChars,
+    '一个 tick 的快进不该把整章吐完 —— 那是"跳字数"，而跳字数会立刻露馅',
+  )
 })

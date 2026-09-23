@@ -26,7 +26,7 @@ import {
   readingRatio,
   restoreRevealed,
 } from './scroll.ts'
-import { charsAt, scheduleDuration, typingSchedule } from './typing.ts'
+import { advanceClock, charsAt, extendFastForward, scheduleDuration, typingSchedule } from './typing.ts'
 import { getPrimitives } from './primitives.ts'
 import { PLACEHOLDER, splitImagePlaceholders } from './richtext.ts'
 import type { BookRecord, ChapterImageRecord, ChapterRecord, ProgressRecord } from './storage.ts'
@@ -768,17 +768,27 @@ function StreamBody({
     followRef.current = true
   }, [loading, chapter, total, chapterIndex, book.id, forceTop, initialRatio])
 
+  // 快进到期的时刻。放 ref 而不是 state：它每 TICK_MS 被读一次，进 state 会让整个
+  // 组件每 tick 重渲染一遍，而它本身不需要触发任何渲染。
+  const fastUntilRef = React.useRef(0)
+
   // 流式输出：按时间表从起始位置长出来，直到整章输出完。
   //
   // 为什么不是"每 tick 加固定字数"：那样"一行有多长"就直接决定了"它占多少时间"，
   // 于是短行一闪而过看不见、长段落却要干等十几秒。打字机的手感来自**按行分配时间**
   // （见 typing.ts），而不是一个全局匀速的字符流。
+  //
+  // 用**自己累加的虚拟时钟**，而不是每 tick 重算 `Date.now() - begin`：快进要做的
+  // 正是让这个时钟走快，而每行的时间预算原封不动 —— 所以快进看上去仍是打字机。
   React.useEffect(() => {
     if (startAt === null || schedule.length === 0 || duration <= 0) return undefined
 
-    const begin = Date.now()
+    let elapsed = 0
+    let last = Date.now()
     const timer = window.setInterval(() => {
-      const elapsed = Date.now() - begin
+      const now = Date.now()
+      elapsed = advanceClock(elapsed, now - last, now < fastUntilRef.current, duration)
+      last = now
       setRevealed(charsAt(schedule, elapsed))
       if (elapsed >= duration) window.clearInterval(timer)
     }, TICK_MS)
@@ -863,6 +873,13 @@ function StreamBody({
       if (action === 'toggleList') {
         void saveProgress(chapterIndex, currentRatio())
         onToggleList()
+        return
+      }
+
+      // 快进：只把虚拟时钟推快，不动已输出的字数（见 typing.ts 的 advanceClock）。
+      // 自动重复会不断刷新到期时刻，所以按住就是持续快进。
+      if (action === 'fastForward') {
+        fastUntilRef.current = extendFastForward(Date.now(), fastUntilRef.current)
         return
       }
 

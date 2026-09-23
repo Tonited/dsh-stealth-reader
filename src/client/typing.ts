@@ -133,3 +133,60 @@ export function charsAt(slots: readonly LineSlot[], elapsedMs: number): number {
 
   return last.endChars
 }
+
+// ------------------------------------------------------------------ 快进
+
+/**
+ * 快进（按住 Shift + ↓ 或 →）。
+ *
+ * 为什么需要它：逐字输出的节奏是伪装的一部分，但它也是"想读快一点"时唯一的阻碍 ——
+ * 而且**滚动救不了这件事**：视口恒在已输出内容的底部，还没输出的字滚也滚不出来。
+ * 唯一的办法是让输出本身变快。
+ *
+ * 做法上刻意**不是**"跳字数"。快进让虚拟时钟走快，而每一行的时间预算原封不动，
+ * 于是文字仍然逐行长出来 —— 看上去还是"在生成"，只是快。整段整段地蹦出来会立刻
+ * 露馅：那不像 AI 在输出，像有人在翻页。
+ */
+export const FAST_FORWARD = {
+  /** 快进期间虚拟时钟走多快。 */
+  rate: 12,
+  /**
+   * 一次按键让快进持续多久。
+   *
+   * 键盘自动重复会不断刷新它，所以"按住"就等于持续快进；同时它让**点一下**
+   * 也能拿到一整段快进 —— 点一下快进一小段，按住就一直快。
+   */
+  windowMs: 600,
+}
+
+/**
+ * 收到一次快进按键之后，快进应该持续到哪个时刻。
+ *
+ * 取 `max` 而不是直接覆盖：自动重复只应该把到期时刻往后推，不该因为某次重复
+ * 来得早而缩短已经承诺出去的那一段。
+ */
+export function extendFastForward(
+  now: number,
+  currentUntil: number,
+  windowMs = FAST_FORWARD.windowMs,
+): number {
+  return Math.max(currentUntil, now + windowMs)
+}
+
+/**
+ * 推进虚拟时钟。
+ *
+ * 不变量：单调不减、不为负、不超过 `durationMs`（跑完就停在末尾，不会越界）。
+ * `durationMs` 的封顶很重要 —— 它保证"快进"最多把这一章推完，不会溢到下一章的坐标里。
+ */
+export function advanceClock(
+  elapsedMs: number,
+  deltaMs: number,
+  fast: boolean,
+  durationMs: number,
+  rate = FAST_FORWARD.rate,
+): number {
+  const step = Math.max(0, deltaMs) * (fast ? Math.max(1, rate) : 1)
+  const next = Math.max(0, elapsedMs) + step
+  return Math.min(next, Math.max(0, durationMs))
+}

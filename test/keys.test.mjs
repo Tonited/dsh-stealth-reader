@@ -143,3 +143,37 @@ test('阅读操作键不抢带修饰键的组合（留给浏览器与系统）',
   assert.equal(resolveReadingKey({ code: 'KeyL', keyCode: 229 }), null)
   assert.equal(resolveReadingKey({ code: 'KeyL', keyCode: 76, isComposing: true }), null)
 })
+
+// ---------------------------------------------------------------- 快进
+
+test('快进：Shift + 前向方向键（↓ / →）', () => {
+  assert.equal(resolveReadingKey({ code: 'ArrowDown', keyCode: 40, shiftKey: true }), 'fastForward')
+  assert.equal(resolveReadingKey({ code: 'ArrowRight', keyCode: 39, shiftKey: true }), 'fastForward')
+})
+
+test('快进只重定义前向那一对：Shift+↑ / Shift+← 沿用滚动与翻章', () => {
+  assert.equal(resolveReadingKey({ code: 'ArrowUp', keyCode: 38, shiftKey: true }), 'lineUp')
+  assert.equal(resolveReadingKey({ code: 'ArrowLeft', keyCode: 37, shiftKey: true }), 'prevChapter')
+})
+
+test('快进不越过修饰键红线：带 Ctrl/Alt/Meta 一律放过', () => {
+  assert.equal(
+    resolveReadingKey({ code: 'ArrowDown', keyCode: 40, shiftKey: true, ctrlKey: true }),
+    null,
+  )
+  assert.equal(
+    resolveReadingKey({ code: 'ArrowRight', keyCode: 39, shiftKey: true, altKey: true }),
+    null,
+  )
+  assert.equal(
+    resolveReadingKey({ code: 'ArrowDown', keyCode: 40, shiftKey: true, isComposing: true }),
+    null,
+  )
+})
+
+test('不快进时方向键语义不变（回归护栏）', () => {
+  assert.equal(resolveReadingKey({ code: 'ArrowDown', keyCode: 40 }), 'lineDown')
+  assert.equal(resolveReadingKey({ code: 'ArrowRight', keyCode: 39 }), 'nextChapter')
+  assert.equal(resolveReadingKey({ code: 'ArrowUp', keyCode: 38 }), 'lineUp')
+  assert.equal(resolveReadingKey({ code: 'ArrowLeft', keyCode: 37 }), 'prevChapter')
+})

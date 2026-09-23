@@ -100,6 +100,8 @@ export type ReadingAction =
   | 'toggleList'
   | 'lineUp'
   | 'lineDown'
+  /** 快进：让逐字输出的虚拟时钟走快（见 typing.ts 的 `FAST_FORWARD`）。 */
+  | 'fastForward'
 
 /**
  * 阅读态按键 → 操作。
@@ -112,6 +114,17 @@ export function resolveReadingKey(event: any): ReadingAction | null {
   if (!event) return null
   if (event.isComposing || event.keyCode === 229) return null
   if (event.ctrlKey || event.altKey || event.metaKey) return null
+
+  // 快进：Shift + 前向方向键。
+  //
+  // 为什么需要它：滚动解决不了"想读快一点" —— 视口恒在已输出内容的底部，
+  // 还没输出的字滚也滚不出来，唯一的办法是让输出本身变快。
+  //
+  // 只重定义**前向**那一对。Shift+↑ / Shift+← 沿用原来的滚动与翻章（Shift 本来就不在
+  // 上面的排除列表里），所以这个改动只影响两个"往前走"的组合。
+  if (event.shiftKey && (event.code === 'ArrowDown' || event.code === 'ArrowRight')) {
+    return 'fastForward'
+  }
 
   switch (event.code) {
     case 'ArrowRight':
