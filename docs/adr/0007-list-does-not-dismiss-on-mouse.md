@@ -20,20 +20,27 @@ ADR-0006 把鼠标契约收敛成一条：`stream` 态下鼠标移动 1px / 点�
 
 ## 决定
 
-书单开着时（`listOpen`），鼠标事件**不参与收场**；这个状态下唯一的出口是快捷键。
+书单在屏幕上时（`listVisible`），鼠标事件**不参与收场**；这个状态下唯一的出口是快捷键。
+
+"在屏幕上"有两种来源，`keys.ts` 的 `isListSurface` 把它们合成一个判断：
+
+- 用户按 `L` 把书单打开了（盖在内容流上）；
+- **根本没有打开的书** —— 此时 `StreamView` 直接 `return list`，书单就是覆盖层的全部内容。
+
+只看前者会让空书库下鼠标一动就收场，连 "+ attach file" 都点不到。
 
 | 界面 | 鼠标 | 快捷键 |
 | --- | --- | --- |
 | `stream`（读书） | 移动 1px / 点击 / pointerdown → `closed` | → `closed` |
-| `stream` + 书单开着 | **原样交给书单自己用** | → `closed` |
+| `stream` + 书单在屏幕上 | **原样交给书单自己用** | → `closed` |
 
 要点：
 
 - **书单不是第三个状态。** 覆盖层仍然只有 `closed` / `stream` 两态（ADR-0006 的结论不变）；
-  `listOpen` 是 `stream` 内部的一个子标记，只影响鼠标怎么裁决。ADR-0006 否掉的是
+  `listVisible` 是 `stream` 内部的一个子标记，只影响鼠标怎么裁决。ADR-0006 否掉的是
   "多一个**界面状态**"，不是"裁决时多一个输入"。
 - 这个标记住在 store 而不是组件 state 里：做裁决的是挂在 window 上的**全局**处理器
-  （`index.tsx` 的 `onPointer`），它读不到 React 组件内部状态。见 `store.ts` 的 `setListOpen`。
+  （`index.tsx` 的 `onPointer`），它读不到 React 组件内部状态。见 `store.ts` 的 `setListVisible`。
 - **默认关闭**。不传这个标记时，裁决与 ADR-0006 的原契约逐字相同。
 
 ## 后果

@@ -10,7 +10,7 @@
 //
 // 键盘在内容流里**不**收场：那是翻页与跳章要用的。收场交给鼠标 —— 慌乱时手总会先碰鼠标。
 //
-// 唯一的例外是书单（`listOpen`，见 ADR-0007）：书单是要用鼠标操作的 ——
+// 唯一的例外是书单（`listVisible`，见 ADR-0007）：书单是要用鼠标操作的 ——
 // 点书名打开、点 ✕ 删除、把文件拖进来 —— 鼠标一动就收场等于根本点不到书。
 
 export type Mode = 'closed' | 'stream'
@@ -47,12 +47,23 @@ const DISMISSING_POINTER_EVENTS = new Set(['mousemove', 'click', 'pointerdown'])
 /** `resolveInteraction` 的额外上下文。 */
 export interface InteractionOptions {
   /**
-   * 书单是否盖在内容流上（ADR-0007）。
+   * 屏幕上此刻是不是书单（ADR-0007）。
    *
-   * 开着时鼠标事件一律不参与收场 —— 书单只能用鼠标操作，一动就收场等于点不到书。
+   * 是的话鼠标事件一律不参与收场 —— 书单只能用鼠标操作，一动就收场等于点不到书。
    * 这个状态下收场只走快捷键。默认 `false`，也就是"鼠标一动就收场"的原契约。
    */
-  listOpen?: boolean
+  listVisible?: boolean
+}
+
+/**
+ * 屏幕上此刻是不是书单 —— 决定鼠标要不要参与收场（ADR-0007）。
+ *
+ * 两个来源要一起看：用户按 `L` 把书单打开了（`listOpen`），或者**根本没有打开的书**
+ * （`bookOpened` 为 false —— 此时书单就是覆盖层的全部内容）。只看前者，空书库下
+ * 鼠标一动就收场，什么也点不到。
+ */
+export function isListSurface(surface: { bookOpened: boolean; listOpen: boolean }): boolean {
+  return !surface.bookOpened || surface.listOpen
 }
 
 /**
@@ -71,9 +82,9 @@ export function resolveInteraction(
   // 只有内容流需要额外裁决；真实界面下插件什么都不该管。
   if (mode !== 'stream') return null
 
-  // 书单开着：鼠标交给书单自己用。这一条必须在模式判定**之后** ——
+  // 书单在屏幕上：鼠标交给书单自己用。这一条必须在模式判定**之后** ——
   // 书单只存在于内容流里，`closed` 下压根没有书单可点。
-  if (options.listOpen) return null
+  if (options.listVisible) return null
 
   // 鼠标一动就收场。刻意**不**设位移阈值：被撞见时手总会先碰鼠标，
   // 那一下必须立刻见效 —— 晚半拍就晚了。

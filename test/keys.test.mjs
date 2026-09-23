@@ -10,6 +10,7 @@ import assert from 'node:assert/strict'
 
 import {
   DEFAULT_SHORTCUT,
+  isListSurface,
   isToggleShortcut,
   resolveInteraction,
   resolveReadingKey,
@@ -67,7 +68,7 @@ test('内容流里：鼠标一动、或点一下，立刻收场', () => {
 })
 
 test('书单开着时鼠标**不**收场，否则根本点不到书（ADR-0007）', () => {
-  const list = { listOpen: true }
+  const list = { listVisible: true }
   assert.equal(resolveInteraction('stream', { type: 'mousemove' }, list), null, '移动要留给书单')
   assert.equal(resolveInteraction('stream', { type: 'click' }, list), null, '点书名打开')
   assert.equal(resolveInteraction('stream', { type: 'pointerdown' }, list), null, '点 ✕ 删除')
@@ -82,16 +83,27 @@ test('书单标记默认关闭：不传 options 就等于原来的"一动就收�
   assert.equal(resolveInteraction('stream', { type: 'mousemove' }), 'closed', '省略 options')
   assert.equal(resolveInteraction('stream', { type: 'mousemove' }, {}), 'closed', '空 options')
   assert.equal(
-    resolveInteraction('stream', { type: 'mousemove' }, { listOpen: false }),
+    resolveInteraction('stream', { type: 'mousemove' }, { listVisible: false }),
     'closed',
     '显式 false',
   )
 })
 
 test('书单只在内容流里存在：closed 下带书单标记也什么都不管', () => {
-  assert.equal(resolveInteraction('closed', { type: 'mousemove' }, { listOpen: true }), null)
-  assert.equal(resolveInteraction('closed', { type: 'pointerdown' }, { listOpen: true }), null)
-  assert.equal(resolveInteraction('closed', hotkey(), { listOpen: true }), 'stream')
+  assert.equal(resolveInteraction('closed', { type: 'mousemove' }, { listVisible: true }), null)
+  assert.equal(resolveInteraction('closed', { type: 'pointerdown' }, { listVisible: true }), null)
+  assert.equal(resolveInteraction('closed', hotkey(), { listVisible: true }), 'stream')
+})
+
+test('isListSurface：书单在屏幕上 = 按 L 打开了，**或**压根没有打开的书', () => {
+  assert.equal(isListSurface({ bookOpened: true, listOpen: false }), false, '在读书，不是书单')
+  assert.equal(isListSurface({ bookOpened: true, listOpen: true }), true, '按 L 盖在正文上')
+  assert.equal(
+    isListSurface({ bookOpened: false, listOpen: false }),
+    true,
+    '空书库：书单就是覆盖层的全部内容，那同样是要用鼠标点的界面',
+  )
+  assert.equal(isListSurface({ bookOpened: false, listOpen: true }), true)
 })
 
 test('内容流里滚轮与键盘**不**收场（那是阅读操作要用的）', () => {

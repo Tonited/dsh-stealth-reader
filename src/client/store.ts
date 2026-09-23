@@ -23,8 +23,8 @@ const SLOT = '__STEALTH_READER_STORE__'
 
 interface StoreState {
   mode: Mode
-  /** 书单开合；见下方 `setListOpen` 的说明。 */
-  listOpen: boolean
+  /** 书单是否在屏幕上；见下方 `setListVisible` 的说明。 */
+  listVisible: boolean
   listeners: Set<Listener>
 }
 
@@ -33,7 +33,7 @@ function slot(): Record<string, StoreState | undefined> {
 }
 
 function state(): StoreState {
-  return (slot()[SLOT] ??= { mode: 'closed', listOpen: false, listeners: new Set<Listener>() })
+  return (slot()[SLOT] ??= { mode: 'closed', listVisible: false, listeners: new Set<Listener>() })
 }
 
 export function current(): Mode {
@@ -80,7 +80,11 @@ export function goTo(next: Mode): void {
 }
 
 /**
- * 书单（伪装成「最近的任务」）是否盖在内容流上。
+ * 书单（伪装成「最近的任务」）此刻是否在屏幕上。
+ *
+ * 注意语义是"在屏幕上"，而不是"`listOpen` 那个 React state 为真"：**没有打开的书时
+ * 书单就是覆盖层的全部内容**（`StreamView` 直接 `return list`），那同样是一个要靠鼠标
+ * 点的界面。两种情况都得算进来，否则空书库下鼠标一动就收场、什么都点不到。
  *
  * 为什么这个标志住在 store，而不是只当 `StreamView` 的组件 state：判定"这个鼠标事件
  * 要不要收场"的是挂在 window 上的**全局**处理器（index.tsx 的 `onPointer`），
@@ -90,12 +94,12 @@ export function goTo(next: Mode): void {
  * 刻意**不**接进 subscribe 通知链：只有交互裁决会读它，改它不该引起任何重渲染。
  * 书单本身的重渲染由 `StreamView` 自己的 state 驱动。
  */
-export function setListOpen(open: boolean): void {
-  state().listOpen = open === true
+export function setListVisible(visible: boolean): void {
+  state().listVisible = visible === true
 }
 
-export function isListOpen(): boolean {
-  return state().listOpen === true
+export function isListVisible(): boolean {
+  return state().listVisible === true
 }
 
 /** 订阅模式变化；调用时立即用当前值回调一次。 */
@@ -110,5 +114,5 @@ export function subscribe(listener: Listener): () => void {
 
 /** 仅测试用：重置状态（避免用例之间互相影响）。 */
 export function resetForTest(): void {
-  slot()[SLOT] = { mode: 'closed', listOpen: false, listeners: new Set<Listener>() }
+  slot()[SLOT] = { mode: 'closed', listVisible: false, listeners: new Set<Listener>() }
 }

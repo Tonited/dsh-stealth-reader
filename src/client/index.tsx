@@ -68,7 +68,7 @@ function onKeyDown(event: KeyboardEvent): void {
  */
 function onPointer(event: Event): void {
   const mode = store.current()
-  const next = resolveInteraction(mode, event, { listOpen: store.isListOpen() })
+  const next = resolveInteraction(mode, event, { listVisible: store.isListVisible() })
   if (next === null) return
   log(`pointer:${next}`)
   store.goTo(next)

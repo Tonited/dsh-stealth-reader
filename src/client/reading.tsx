@@ -9,7 +9,7 @@
 import * as React from 'react'
 
 import type { DialogueLine } from './dialogue.ts'
-import { resolveReadingKey } from './keys.ts'
+import { isListSurface, resolveReadingKey } from './keys.ts'
 import {
   clampToViewport,
   nextRegion,
@@ -1106,16 +1106,20 @@ export function StreamView({ dialogueSource }: StreamViewProps): React.ReactElem
   const [forceTop, setForceTop] = React.useState(false)
   const region = useMainRegion()
 
-  // 把书单开合**发布**到 store：全局鼠标处理器（index.tsx 的 `onPointer`）读不到
-  // 组件 state，却必须在书单开着时放过鼠标（ADR-0007）。
+  // 书单是否**在屏幕上**。没有打开的书时，下面的 `if (!open) return list` 让书单成为
+  // 覆盖层的全部内容 —— 那同样是一个要用鼠标点的界面，所以必须算进来。
+  const listVisible = isListSurface({ bookOpened: open !== null, listOpen })
+
+  // 把它**发布**到 store：全局鼠标处理器（index.tsx 的 `onPointer`）读不到组件 state，
+  // 却必须在书单在屏幕上时放过鼠标（ADR-0007）。
   //
   // 用 effect 而不是在 `setListOpen` 的四个调用点手写同步：漏掉任何一处，
   // 就会出现"书单明明开着、鼠标一动却照样收场"的幽灵 bug。
   // 卸载时清掉 —— 覆盖层关闭会卸载本组件，不清的话下次进内容流会带着上次的书单状态。
   React.useEffect(() => {
-    store.setListOpen(listOpen)
-    return () => store.setListOpen(false)
-  }, [listOpen])
+    store.setListVisible(listVisible)
+    return () => store.setListVisible(false)
+  }, [listVisible])
 
   // 真实会话内容**进入时快照一次**。
   //

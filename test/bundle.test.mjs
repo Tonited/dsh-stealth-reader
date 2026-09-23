@@ -407,10 +407,10 @@ test('H1d：书单开着时鼠标不收场（ADR-0007 的接线）', async () =>
   win.pressHotkey()
   assert.equal(storeMode(sandbox), 'stream')
 
-  // 模拟 StreamView 把"书单已打开"发布到 store。
-  // 这里直接写槽位、而不是调用 setListOpen()：store 模块读的是**沙箱的** globalThis，
+  // 模拟 StreamView 把"书单在屏幕上"发布到 store。
+  // 这里直接写槽位、而不是调用 setListVisible()：store 模块读的是**沙箱的** globalThis，
   // 测试进程里那份模块实例读不到它（见 loadClientBundle 的注释）。
-  sandbox.__STEALTH_READER_STORE__.listOpen = true
+  sandbox.__STEALTH_READER_STORE__.listVisible = true
 
   win.dispatch('mousemove', { type: 'mousemove' })
   assert.equal(storeMode(sandbox), 'stream', '书单开着时移动鼠标不该收场 —— 否则点不到书')

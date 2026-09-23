@@ -113,11 +113,11 @@ test('状态落在 globalThis 槽位上，可被另一份模块实例看到（�
 // ---------------------------------------------------------------- 书单标记（ADR-0007）
 
 test('书单标记：默认关，可开可关', () => {
-  assert.equal(store.isListOpen(), false, '初始为关')
-  store.setListOpen(true)
-  assert.equal(store.isListOpen(), true)
-  store.setListOpen(false)
-  assert.equal(store.isListOpen(), false)
+  assert.equal(store.isListVisible(), false, '初始为关')
+  store.setListVisible(true)
+  assert.equal(store.isListVisible(), true)
+  store.setListVisible(false)
+  assert.equal(store.isListVisible(), false)
 })
 
 test('书单标记不接进 subscribe 通知链（改它不该引起任何重渲染）', () => {
@@ -125,8 +125,8 @@ test('书单标记不接进 subscribe 通知链（改它不该引起任何重渲
   store.subscribe((mode) => seen.push(mode))
   assert.deepEqual(seen, ['closed'])
 
-  store.setListOpen(true)
-  assert.deepEqual(seen, ['closed'], 'setListOpen 不该惊动 mode 的订阅者')
+  store.setListVisible(true)
+  assert.deepEqual(seen, ['closed'], 'setListVisible 不该惊动 mode 的订阅者')
 
   store.openStream()
   assert.deepEqual(seen, ['closed', 'stream'], 'mode 的通知照常')
@@ -134,23 +134,23 @@ test('书单标记不接进 subscribe 通知链（改它不该引起任何重渲
 
 test('书单标记与 mode 相互独立：关掉覆盖层不会顺手改书单，反之亦然', () => {
   store.openStream()
-  store.setListOpen(true)
+  store.setListVisible(true)
   store.close()
-  assert.equal(store.isListOpen(), true, 'close() 只动 mode；书单由组件卸载时的 effect 清')
+  assert.equal(store.isListVisible(), true, 'close() 只动 mode；书单由组件卸载时的 effect 清')
   assert.equal(store.current(), 'closed')
 })
 
 test('书单标记同样落在 globalThis 槽位上（热替换安全）', () => {
-  store.setListOpen(true)
-  assert.equal(globalThis[SLOT].listOpen, true, '必须写进共享槽位，而不是模块私有变量')
+  store.setListVisible(true)
+  assert.equal(globalThis[SLOT].listVisible, true, '必须写进共享槽位，而不是模块私有变量')
 
   // 模拟热替换后的另一个模块实例改写它。
-  globalThis[SLOT].listOpen = false
-  assert.equal(store.isListOpen(), false, '本实例必须读到共享槽位')
+  globalThis[SLOT].listVisible = false
+  assert.equal(store.isListVisible(), false, '本实例必须读到共享槽位')
 })
 
 test('resetForTest 把书单标记一起清掉', () => {
-  store.setListOpen(true)
+  store.setListVisible(true)
   store.resetForTest()
-  assert.equal(store.isListOpen(), false)
+  assert.equal(store.isListVisible(), false)
 })
