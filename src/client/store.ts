@@ -23,6 +23,8 @@ const SLOT = '__STEALTH_READER_STORE__'
 
 interface StoreState {
   mode: Mode
+  /** 书单开合；见下方 `setListOpen` 的说明。 */
+  listOpen: boolean
   listeners: Set<Listener>
 }
 
@@ -31,7 +33,7 @@ function slot(): Record<string, StoreState | undefined> {
 }
 
 function state(): StoreState {
-  return (slot()[SLOT] ??= { mode: 'closed', listeners: new Set<Listener>() })
+  return (slot()[SLOT] ??= { mode: 'closed', listOpen: false, listeners: new Set<Listener>() })
 }
 
 export function current(): Mode {
@@ -77,6 +79,25 @@ export function goTo(next: Mode): void {
   setMode(next)
 }
 
+/**
+ * 书单（伪装成「最近的任务」）是否盖在内容流上。
+ *
+ * 为什么这个标志住在 store，而不是只当 `StreamView` 的组件 state：判定"这个鼠标事件
+ * 要不要收场"的是挂在 window 上的**全局**处理器（index.tsx 的 `onPointer`），
+ * 它读不到 React 组件内部状态。放进 store 还顺带继承了热替换安全性 —— 槽位在
+ * globalThis 上，热替换后新旧模块看到的是同一份（同 `SLOT` 的注释）。
+ *
+ * 刻意**不**接进 subscribe 通知链：只有交互裁决会读它，改它不该引起任何重渲染。
+ * 书单本身的重渲染由 `StreamView` 自己的 state 驱动。
+ */
+export function setListOpen(open: boolean): void {
+  state().listOpen = open === true
+}
+
+export function isListOpen(): boolean {
+  return state().listOpen === true
+}
+
 /** 订阅模式变化；调用时立即用当前值回调一次。 */
 export function subscribe(listener: Listener): () => void {
   const store = state()
@@ -89,5 +110,5 @@ export function subscribe(listener: Listener): () => void {
 
 /** 仅测试用：重置状态（避免用例之间互相影响）。 */
 export function resetForTest(): void {
-  slot()[SLOT] = { mode: 'closed', listeners: new Set<Listener>() }
+  slot()[SLOT] = { mode: 'closed', listOpen: false, listeners: new Set<Listener>() }
 }

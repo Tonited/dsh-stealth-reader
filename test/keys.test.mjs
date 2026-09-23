@@ -4,6 +4,7 @@
 // 所以这两条路径必须被钉住：
 //   1. 快捷键识别（避开 Windows/IME 雷区、用 e.code、IME 守卫）
 //   2. **隐藏态下任何交互都退回真实界面** —— 被撞见时能不能收场就看它
+//      （书单是唯一例外，见 ADR-0007：那个界面只能靠鼠标操作）
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 
@@ -63,6 +64,34 @@ test('内容流里：鼠标一动、或点一下，立刻收场', () => {
   assert.equal(resolveInteraction('stream', { type: 'mousemove' }), 'closed')
   assert.equal(resolveInteraction('stream', { type: 'click' }), 'closed')
   assert.equal(resolveInteraction('stream', { type: 'pointerdown' }), 'closed')
+})
+
+test('书单开着时鼠标**不**收场，否则根本点不到书（ADR-0007）', () => {
+  const list = { listOpen: true }
+  assert.equal(resolveInteraction('stream', { type: 'mousemove' }, list), null, '移动要留给书单')
+  assert.equal(resolveInteraction('stream', { type: 'click' }, list), null, '点书名打开')
+  assert.equal(resolveInteraction('stream', { type: 'pointerdown' }, list), null, '点 ✕ 删除')
+  assert.equal(
+    resolveInteraction('stream', hotkey(), list),
+    'closed',
+    '快捷键仍然是书单开着时唯一的出口',
+  )
+})
+
+test('书单标记默认关闭：不传 options 就等于原来的"一动就收场"', () => {
+  assert.equal(resolveInteraction('stream', { type: 'mousemove' }), 'closed', '省略 options')
+  assert.equal(resolveInteraction('stream', { type: 'mousemove' }, {}), 'closed', '空 options')
+  assert.equal(
+    resolveInteraction('stream', { type: 'mousemove' }, { listOpen: false }),
+    'closed',
+    '显式 false',
+  )
+})
+
+test('书单只在内容流里存在：closed 下带书单标记也什么都不管', () => {
+  assert.equal(resolveInteraction('closed', { type: 'mousemove' }, { listOpen: true }), null)
+  assert.equal(resolveInteraction('closed', { type: 'pointerdown' }, { listOpen: true }), null)
+  assert.equal(resolveInteraction('closed', hotkey(), { listOpen: true }), 'stream')
 })
 
 test('内容流里滚轮与键盘**不**收场（那是阅读操作要用的）', () => {

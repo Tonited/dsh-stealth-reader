@@ -1106,6 +1106,17 @@ export function StreamView({ dialogueSource }: StreamViewProps): React.ReactElem
   const [forceTop, setForceTop] = React.useState(false)
   const region = useMainRegion()
 
+  // 把书单开合**发布**到 store：全局鼠标处理器（index.tsx 的 `onPointer`）读不到
+  // 组件 state，却必须在书单开着时放过鼠标（ADR-0007）。
+  //
+  // 用 effect 而不是在 `setListOpen` 的四个调用点手写同步：漏掉任何一处，
+  // 就会出现"书单明明开着、鼠标一动却照样收场"的幽灵 bug。
+  // 卸载时清掉 —— 覆盖层关闭会卸载本组件，不清的话下次进内容流会带着上次的书单状态。
+  React.useEffect(() => {
+    store.setListOpen(listOpen)
+    return () => store.setListOpen(false)
+  }, [listOpen])
+
   // 真实会话内容**进入时快照一次**。
   //
   // 用 ref 而不是 useMemo：useMemo 在依赖变化时会重算，而这里要的是"真的只取一次"。

@@ -62,10 +62,13 @@ function onKeyDown(event: KeyboardEvent): void {
  *
  * 刻意**不** preventDefault：那会破坏页面正常的滚动与选择，而这里唯一要做的事
  * 就是"在内容流里把界面收回去"。滚轮不触发收场 —— 它是用来滚动阅读的。
+ *
+ * 书单开着时整个收场逻辑短路（见 keys.ts 的 `InteractionOptions`）：书单要靠鼠标点，
+ * 所以这些事件必须原样落到书单自己身上。
  */
 function onPointer(event: Event): void {
   const mode = store.current()
-  const next = resolveInteraction(mode, event)
+  const next = resolveInteraction(mode, event, { listOpen: store.isListOpen() })
   if (next === null) return
   log(`pointer:${next}`)
   store.goTo(next)

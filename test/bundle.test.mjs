@@ -399,6 +399,29 @@ test('H1c：鼠标一动就收场（内容流的主要退出方式）', async ()
   assert.equal(storeMode(sandbox), 'closed', '移动鼠标 → 立刻回到真实界面')
 })
 
+test('H1d：书单开着时鼠标不收场（ADR-0007 的接线）', async () => {
+  const { plugin, sandbox } = await loadClientBundle()
+  const win = dispatchableWindow(sandbox)
+  applyInSandbox(plugin, sandbox)
+
+  win.pressHotkey()
+  assert.equal(storeMode(sandbox), 'stream')
+
+  // 模拟 StreamView 把"书单已打开"发布到 store。
+  // 这里直接写槽位、而不是调用 setListOpen()：store 模块读的是**沙箱的** globalThis，
+  // 测试进程里那份模块实例读不到它（见 loadClientBundle 的注释）。
+  sandbox.__STEALTH_READER_STORE__.listOpen = true
+
+  win.dispatch('mousemove', { type: 'mousemove' })
+  assert.equal(storeMode(sandbox), 'stream', '书单开着时移动鼠标不该收场 —— 否则点不到书')
+
+  win.dispatch('pointerdown', { type: 'pointerdown' })
+  assert.equal(storeMode(sandbox), 'stream', '按下要原样留给书单（点书名 / 点 ✕ 删除）')
+
+  win.pressHotkey()
+  assert.equal(storeMode(sandbox), 'closed', '快捷键仍是书单开着时唯一的出口')
+})
+
 test('H3b：热替换（重复 apply）后按键仍然生效，且监听器不累积', async () => {
   const { plugin, sandbox } = await loadClientBundle()
   const win = dispatchableWindow(sandbox)
