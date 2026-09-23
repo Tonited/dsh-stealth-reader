@@ -946,6 +946,11 @@ const LIST_ROW: React.CSSProperties = {
  * 每本书就是一个任务，进度就是它的百分比 —— 这样书架本身也在伪装语言之内，
  * 不需要为它单开一个界面。
  */
+/** 列表底部的灰色小字（书架与章节目录共用）。 */
+function footnote(text: string): React.ReactElement {
+  return React.createElement('div', { style: { ...LIST_TEXT, opacity: 0.38, marginTop: 2 } }, text)
+}
+
 function TaskList({
   books,
   progressMap,
@@ -955,6 +960,7 @@ function TaskList({
   region,
   onImport,
   onOpen,
+  onOpenChapters,
   onDelete,
   onClose,
 }: {
@@ -965,15 +971,15 @@ function TaskList({
   activeId?: string
   region: Rect | null
   onImport: (file: File) => void
+  /** 点整行 → 选中这本书开读（续读上次的位置）。 */
   onOpen: (bookId: string) => void
+  /** 行右侧的图标按钮 → 展开这本书的步骤清单（见 ADR-0008）。 */
+  onOpenChapters: (bookId: string) => void
   onDelete: (bookId: string) => void
   onClose: () => void
 }): React.ReactElement {
   const inputRef = React.useRef<HTMLInputElement | null>(null)
   const [dragging, setDragging] = React.useState(false)
-
-  const footnote = (text: string): React.ReactElement =>
-    React.createElement('div', { style: { ...LIST_TEXT, opacity: 0.38, marginTop: 2 } }, text)
 
   return React.createElement(
     'div',
@@ -1039,6 +1045,18 @@ function TaskList({
             React.createElement(
               'span',
               {
+                title: '步骤',
+                onClick: (event: React.MouseEvent) => {
+                  event.stopPropagation()
+                  onOpenChapters(book.id)
+                },
+                style: { opacity: 0.35, fontSize: 12.5, padding: '0 4px' },
+              },
+              '≡',
+            ),
+            React.createElement(
+              'span',
+              {
                 title: '移除',
                 onClick: (event: React.MouseEvent) => {
                   event.stopPropagation()
@@ -1059,7 +1077,7 @@ function TaskList({
         { style: { cursor: 'pointer' }, onClick: () => inputRef.current?.click() },
         importing ? 'attaching…' : '+ attach file',
       ),
-      React.createElement('span', null, '\u2190/\u2192 chapter · space page · l list'),
+      React.createElement('span', null, '≡ for steps · space page · l close'),
     ),
     React.createElement('input', {
       ref: inputRef,
@@ -1083,6 +1101,128 @@ function TaskList({
   )
 }
 
+/**
+ * 一本书的章节目录。
+ *
+ * 伪装形态：它是「recent tasks」里某个任务展开后的**步骤清单** —— 读过的打 ✓、
+ * 当前这条用 ▸ 标出，右边的数字是步骤序号。屏幕上没有"章"这个字，也看不到正文。
+ *
+ * 打开时会把当前章滚到视野中间：长篇小说动辄几百章，落在第 1 章等于每次都要往下滚三百行。
+ */
+function ChapterList({
+  book,
+  chapters,
+  currentIndex,
+  region,
+  onPick,
+  onBack,
+}: {
+  book: BookRecord
+  chapters: Array<{ index: number; title: string }> | undefined
+  currentIndex: number
+  region: Rect | null
+  onPick: (index: number) => void
+  onBack: () => void
+}): React.ReactElement {
+  const boxRef = React.useRef<HTMLDivElement | null>(null)
+  const currentRef = React.useRef<HTMLDivElement | null>(null)
+
+  React.useEffect(() => {
+    const box = boxRef.current
+    const row = currentRef.current
+    if (!box || !row) return
+    // 手算滚动量而不用 scrollIntoView：后者会连带滚动祖先滚动容器（也就是 DSH 的会话区），
+    // 关掉目录后真实界面会莫名其妙停在别处。
+    const delta = row.getBoundingClientRect().top - box.getBoundingClientRect().top
+    box.scrollTop += delta - box.clientHeight / 2 + row.offsetHeight / 2
+  }, [chapters])
+
+  return React.createElement(
+    'div',
+    {
+      ref: boxRef,
+      style: { ...ROOT_BASE, ...regionStyle(region), padding: '24px 32px 32px' },
+      'data-stealth-reader': 'chapters',
+    },
+    React.createElement(
+      'div',
+      { style: { ...LIST_TEXT, opacity: 0.5, marginBottom: 10, display: 'flex', gap: 12 } },
+      React.createElement(
+        'span',
+        {
+          style: {
+            flex: 1,
+            minWidth: 0,
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+            whiteSpace: 'nowrap',
+          },
+        },
+        book.title,
+      ),
+      React.createElement(
+        'span',
+        { style: { opacity: 0.7 } },
+        `${Math.min(currentIndex + 1, book.chapterCount)}/${book.chapterCount}`,
+      ),
+    ),
+    chapters === undefined
+      ? footnote('loading steps…')
+      : chapters.map((chapter) =>
+          React.createElement(
+            'div',
+            {
+              key: chapter.index,
+              ref: chapter.index === currentIndex ? currentRef : undefined,
+              style: {
+                ...LIST_ROW,
+                background:
+                  chapter.index === currentIndex ? 'rgba(128,128,150,0.14)' : 'transparent',
+              },
+              onClick: () => onPick(chapter.index),
+            },
+            React.createElement(
+              'span',
+              { style: { opacity: 0.5 } },
+              chapter.index < currentIndex ? '✓' : chapter.index === currentIndex ? '▸' : '·',
+            ),
+            React.createElement(
+              'span',
+              {
+                style: {
+                  flex: 1,
+                  minWidth: 0,
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                  whiteSpace: 'nowrap',
+                },
+              },
+              chapter.title,
+            ),
+            React.createElement(
+              'span',
+              { style: { opacity: 0.4, fontSize: 12.5 } },
+              `${chapter.index + 1}`,
+            ),
+          ),
+        ),
+    React.createElement(
+      'div',
+      { style: { ...LIST_TEXT, opacity: 0.32, marginTop: 14, display: 'flex', gap: 14 } },
+      React.createElement('span', { style: { cursor: 'pointer' }, onClick: onBack }, '← back'),
+      React.createElement('span', null, 'space page · l close'),
+    ),
+  )
+}
+
+/**
+ * 书架上盖着哪一层列表；`null` = 没有列表，正在读正文。
+ *
+ * 用一个互斥的状态，而不是"书架开着吗 + 章节目录开着吗"两个布尔量：这两个界面不可能
+ * 同时成立，用两个标志迟早会构造出"两个都开着"这种没有意义的状态。
+ */
+type ListView = { kind: 'books' } | { kind: 'chapters'; book: BookRecord } | null
+
 // ------------------------------------------------------------------ 对外
 
 export interface StreamViewProps {
@@ -1100,22 +1240,25 @@ export function StreamView({ dialogueSource }: StreamViewProps): React.ReactElem
   const [books, setBooks] = React.useState<BookRecord[] | undefined>(undefined)
   const [progressMap, setProgressMap] = React.useState<Record<string, ProgressRecord | undefined>>({})
   const [open, setOpen] = React.useState<OpenState | null>(null)
-  const [listOpen, setListOpen] = React.useState(false)
+  const [listView, setListView] = React.useState<ListView>(null)
+  const [chapterTitles, setChapterTitles] = React.useState<
+    Array<{ index: number; title: string }> | undefined
+  >(undefined)
   const [importing, setImporting] = React.useState(false)
   const [error, setError] = React.useState<string | undefined>(undefined)
   const [forceTop, setForceTop] = React.useState(false)
   const region = useMainRegion()
 
-  // 书单是否**在屏幕上**。没有打开的书时，下面的 `if (!open) return list` 让书单成为
-  // 覆盖层的全部内容 —— 那同样是一个要用鼠标点的界面，所以必须算进来。
-  const listVisible = isListSurface({ bookOpened: open !== null, listOpen })
+  // 列表是否**在屏幕上**。没有打开的书时，下面的 `if (!open)` 让书架成为覆盖层的
+  // 全部内容 —— 那同样是一个要用鼠标点的界面，所以必须算进来。
+  const listVisible = isListSurface({ bookOpened: open !== null, listOpen: listView !== null })
 
   // 把它**发布**到 store：全局鼠标处理器（index.tsx 的 `onPointer`）读不到组件 state，
-  // 却必须在书单在屏幕上时放过鼠标（ADR-0007）。
+  // 却必须在列表在屏幕上时放过鼠标（ADR-0007）。
   //
-  // 用 effect 而不是在 `setListOpen` 的四个调用点手写同步：漏掉任何一处，
-  // 就会出现"书单明明开着、鼠标一动却照样收场"的幽灵 bug。
-  // 卸载时清掉 —— 覆盖层关闭会卸载本组件，不清的话下次进内容流会带着上次的书单状态。
+  // 用 effect 而不是在每个 `setListView` 调用点手写同步：漏掉任何一处，
+  // 就会出现"列表明明开着、鼠标一动却照样收场"的幽灵 bug。
+  // 卸载时清掉 —— 覆盖层关闭会卸载本组件，不清的话下次进内容流会带着上次的列表状态。
   React.useEffect(() => {
     store.setListVisible(listVisible)
     return () => store.setListVisible(false)
@@ -1174,7 +1317,7 @@ export function StreamView({ dialogueSource }: StreamViewProps): React.ReactElem
       // 停在章末附近（往前退几行）正好是"在上次关闭的两三行前开始"，
       // 想接着读按 → 翻下一章即可。
       setForceTop(false)
-      setListOpen(false)
+      setListView(null)
 
       setOpen({ book, chapterIndex, chapter: undefined, loading: true })
       const chapter = await app.getChapter(book.id, chapterIndex)
@@ -1207,6 +1350,39 @@ export function StreamView({ dialogueSource }: StreamViewProps): React.ReactElem
     [app],
   )
 
+  // 打开某本书的步骤清单。先清掉上一本的标题，否则切换书时会闪出别的书的章节。
+  const openChapters = React.useCallback((book: BookRecord) => {
+    setChapterTitles(undefined)
+    setListView({ kind: 'chapters', book })
+  }, [])
+
+  const pickChapter = React.useCallback(
+    (book: BookRecord, index: number) => {
+      setListView(null)
+      void goToChapter(book, index)
+    },
+    [goToChapter],
+  )
+
+  const chapterBook = listView?.kind === 'chapters' ? listView.book : undefined
+
+  // 章节目录打开时才去读标题：几百章的书不该在打开书架时就被全量捞出来。
+  React.useEffect(() => {
+    if (!chapterBook) return
+    let cancelled = false
+    void app.listChapterTitles(chapterBook.id).then(
+      (rows) => {
+        if (!cancelled) setChapterTitles(rows)
+      },
+      () => {
+        if (!cancelled) setChapterTitles([])
+      },
+    )
+    return () => {
+      cancelled = true
+    }
+  }, [app, chapterBook])
+
   const handleImport = React.useCallback(
     async (file: File) => {
       setImporting(true)
@@ -1218,7 +1394,7 @@ export function StreamView({ dialogueSource }: StreamViewProps): React.ReactElem
           return
         }
         const rows = await refresh()
-        setListOpen(true)
+        setListView({ kind: 'books' })
         const only = rows.length === 1 ? rows[0] : undefined
         if (only) void openBook(only.id, rows)
       } finally {
@@ -1237,7 +1413,7 @@ export function StreamView({ dialogueSource }: StreamViewProps): React.ReactElem
     [app, refresh],
   )
 
-  const list = React.createElement(TaskList, {
+  const bookShelf = React.createElement(TaskList, {
     books: books ?? [],
     progressMap,
     importing,
@@ -1246,20 +1422,39 @@ export function StreamView({ dialogueSource }: StreamViewProps): React.ReactElem
     region,
     onImport: (file) => void handleImport(file),
     onOpen: (bookId) => void openBook(bookId),
+    onOpenChapters: (bookId) => {
+      const book = (books ?? []).find((row) => row.id === bookId)
+      if (book) openChapters(book)
+    },
     onDelete: (bookId) => void handleDelete(bookId),
     onClose: () => {
       // 没有正在读的书时，"关闭列表"只能是回到真实界面。
-      if (open) setListOpen(false)
+      if (open) setListView(null)
       else store.close()
     },
   })
 
-  // 没有打开的书：书单就是全部内容。
-  if (!open) return list
+  const chapterList = chapterBook
+    ? React.createElement(ChapterList, {
+        book: chapterBook,
+        chapters: chapterTitles,
+        // 正在读的那本以内存里的章节为准（进度是切章时才落库的），其余看落库的进度。
+        currentIndex:
+          open?.book.id === chapterBook.id
+            ? open.chapterIndex
+            : (progressMap[chapterBook.id]?.chapterIndex ?? 0),
+        region,
+        onPick: (index) => pickChapter(chapterBook, index),
+        onBack: () => setListView({ kind: 'books' }),
+      })
+    : null
 
-  // 有打开的书：内容流**常驻**，书单盖在它上面。
+  // 没有打开的书：列表就是全部内容（书架，或某本书的步骤清单）。
+  if (!open) return chapterList ?? bookShelf
+
+  // 有打开的书：内容流**常驻**，列表盖在它上面。
   //
-  // 关键在"常驻"。如果打开书单就卸载内容流，回来时组件会重新挂载、按 `progressMap`
+  // 关键在"常驻"。如果打开列表就卸载内容流，回来时组件会重新挂载、按 `progressMap`
   // 这个**挂载时的快照**重新定位 —— 刚刚读的进度会整体倒退回去。
   // 让内容流活着，续读定位就只发生一次（`locatedRef`），回来时也不会闪一下重新加载。
   return React.createElement(
@@ -1275,17 +1470,17 @@ export function StreamView({ dialogueSource }: StreamViewProps): React.ReactElem
         progressMap[open.book.id]?.chapterIndex === open.chapterIndex
           ? (progressMap[open.book.id]?.ratio ?? 0)
           : 0,
-      covered: listOpen,
+      covered: listView !== null,
       dialogue,
       region,
       app,
       onChapter: (index) => void goToChapter(open.book, index),
       onToggleList: () => {
-        setListOpen((value) => !value)
-        // 书单要显示刚读到的进度，顺便把挂载时的旧快照刷新掉。
+        setListView((value) => (value ? null : { kind: 'books' }))
+        // 书架要显示刚读到的进度，顺便把挂载时的旧快照刷新掉。
         void refresh()
       },
     }),
-    listOpen ? list : null,
+    listView === null ? null : (chapterList ?? bookShelf),
   )
 }

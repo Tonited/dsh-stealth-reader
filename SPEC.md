@@ -31,6 +31,8 @@
 - [ ] 拖一个 5MB 的 **GBK 编码** txt 进去，任务列表出现这本书，正文**不是乱码**。
 - [ ] `/stealth` 能读：正文以**等宽排版**呈现，工作痕迹行穿插其间，可滚动。
 - [ ] `←` `→` 能跳到上下章；`L` 打开任务列表。
+- [ ] 书架里**点整行** = 选中这本书接着读；点行右侧的 `≡` = 展开步骤清单（ADR-0008）。
+- [ ] 步骤清单能滚动、能点任意一条跳过去；打开时当前章**已经在视野中间**，不是停在第 1 章。
 - [ ] 关掉浏览器标签页重新打开 DSH，这本书的阅读进度**回到原处**（误差半屏内）。
 - [ ] 在伪装阅读里按 `Ctrl+Shift+Alt+Z`，**立刻回到 DSH 真实界面**（阅读位置不丢）。
 - [ ] 在 DSH 真实界面按 `Ctrl+Shift+Alt+Z`，屏幕立刻变成"AI 正在跑长任务"的日志流。
@@ -51,44 +53,48 @@
 
 ## 3. 界面状态机（本项目的核心）
 
-状态定义与转换见 **ADR-0005**。三个**互斥**状态：
+状态定义与转换见 **ADR-0006**（收敛为两态）与 **ADR-0007**（列表界面例外）。
 
 | 状态 | 屏幕上是 | 交互契约 |
 | --- | --- | --- |
-| `closed` | DSH 真实界面 | —— |
-| `disguise` | 只有工作痕迹 | **任何点击/按键立刻回到 DSH 真实界面** |
-| `reading` | 工作痕迹 + 正文交错 | 滚动/翻页/跳章；**点击 = 降级到 `disguise`** |
+| `closed` | DSH 真实界面 | 只有快捷键能进 `stream` |
+| `stream` | 真实会话的工作痕迹 + 小说正文交错 | **鼠标移动 1px / 点击 / pointerdown → 立刻 `closed`**；快捷键也回 `closed` |
 
 ```
-closed ──快捷键──▶ disguise ──快捷键──▶ reading
-   ▲                  │                   │
-   │                  │ 任意交互           │ 快捷键（正文立刻消失）
-   └──────────────────┘◀──────────────────┘
-                      ▲
-                      └── reading 点击（渐进降级）
+closed ◀──快捷键──▶ stream
+   ▲                  │
+   └──────────────────┘
+      鼠标移动 / 点击 / 快捷键
 ```
+
+`stream` 内部还有一个**子标记** `listVisible`（书架或步骤清单是否在屏幕上）。它**不是第三个状态**，
+只是裁决鼠标时多出来的一个输入：列表在屏幕上时鼠标不参与收场 —— 那些界面只能用鼠标操作（ADR-0007）。
 
 不变式：
 
-1. **切换只朝"减少暴露"的方向发生**。`closed → disguise`（先藏起来）、`reading → disguise`
-   （正文消失）都是"更安全"；只有 `disguise → reading` 会把正文显示回来，而那要求用户
-   已经处于"藏好"的状态。所以**任何状态下按快捷键都不会让屏幕上多出小说内容**。
-2. `disguise` 下**任何交互**（click / wheel / keydown / touchstart）都退回 DSH 真实界面。
-3. `reading` 下**不**收场：否则就没法读书。点击只降一级（`reading → disguise`）。
+1. **没有中间态**。任何时候鼠标一动都直接回 DSH 真实界面，不存在"降到某个更安全的伪装态"。
+2. `stream` 下**键盘与滚轮不收场** —— 翻页、跳章、滚动都要用它们。
+3. **唯一的鼠标例外是列表在屏幕上时**（ADR-0007）：此时收场只走快捷键。
 4. 阅读进度在状态切换中**永不丢失**（切换只改显示层）。
-5. `disguise` **永不白屏**：取不到会话数据也必须渲染出通用模板。
+5. `stream` **永不白屏**：取不到会话数据也必须渲染出通用模板。
 6. 任务流的排布必须**确定性**：同一章每次渲染逐行相同，否则滚动位置会漂移。
 
-实现载体：`shell.overlay`（DSH 的全帧浮动层 slot，root 作用域、加性、点击穿透），条目内自行 `position: fixed` 铺满视口。
+实现载体：`shell.overlay`（DSH 的全帧浮动层 slot，root 作用域、加性）。条目内用 `regionStyle`
+把可视区域收到**右侧主区里 Tab 之下、输入框之上**那一段 —— 顶栏、输入框、左侧栏都保持是真的。
 
 ## 4. 数据模型（概念层）
 
-- **Book**：`{ id, title, format: 'txt'|'epub', chapters: Chapter[], addedAt, coverThumb? }`
-- **Chapter**：`{ index, title, text, images? }`（`text` 里的插图位置由 `U+FFFC` 占位符标出）
-- **Progress**：`{ bookId, chapterIndex, ratio }` —— `ratio` 是**章内滚动比例**（见 ADR-0004 的偏离说明）
-- **Prefs**（存 DSH settings）：`{ hotkey, fontSize, lineHeight, theme, disguise: { useExcerpts, customLines[] } }`
+- **Book**：`{ id, title, format: 'txt'|'epub', encoding?, chapterCount, addedAt, warning? }`
+- **Chapter**：`{ bookId, index, title, text, images? }`（`text` 里的插图位置由 `U+FFFC` 占位符标出）
+- **Progress**：`{ bookId, chapterIndex, ratio, updatedAt }` —— `ratio` 是**已输出字符占全章的
+  比例**，不是滚动位置（视口恒在底部自动跟随，滚动比例永远是 1；见 ADR-0004）
 
-存储边界：Book/Chapter/Progress → **IndexedDB**（正文大，不进 settings）；Prefs → **DSH settings**。
+存储边界：Book / Chapter / Progress → **IndexedDB**（正文大，不进 settings）。
+
+**没有用户偏好设置**：手感旋钮（逐字节奏、快捷键、上下键行数、工作痕迹占比）都是源码常量，
+各自只有一处（见 README「手感旋钮」）。宿主侧曾经注册过一组 settings
+（`hotkey` / `fontSize` / `lineHeight` / `theme` / `useExcerpts` / `disguiseLines`），
+但客户端从未读过其中任何一个，已整体删除 —— 一个没人读的设置面板比没有更糟。
 
 导入事务性要求：**解析成功才落库**。半途中断的导入不产生书架条目（临时状态仅存内存）。
 
