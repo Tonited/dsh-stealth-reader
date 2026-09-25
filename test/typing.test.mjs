@@ -17,6 +17,7 @@ import {
   advanceClock,
   charsAt,
   extendFastForward,
+  isFastForwarding,
   lineDuration,
   scheduleDuration,
   typingSchedule,
@@ -151,15 +152,49 @@ test('charsAt：单调不减、不越界、非法时间不炸', () => {
 
 test('快进：重复按键只会把到期时刻往后推，不会被更早的一次缩短', () => {
   const first = extendFastForward(1000, 0)
-  assert.equal(first, 1000 + FAST_FORWARD.windowMs, '第一次按键从当下算起')
+  assert.equal(first, 1000 + FAST_FORWARD.holdGraceMs, '第一次按下从当下算起')
 
   // 关键性质：取 max。手上的重复来得密时，新算出来的到期时刻可能反而更早，
   // 那一下绝不能把已经承诺出去的那一段削短。
-  assert.equal(extendFastForward(1200, 3000), 3000, '算出来更早就不动它')
+  // 这里注入 grace，免得这条性质受 FAST_FORWARD.holdGraceMs 的具体数值影响。
+  assert.equal(extendFastForward(1200, 3000, 600), 3000, '算出来更早就不动它')
+  assert.equal(extendFastForward(1200, 3000, 3000), 4200, '算出来更晚就继续往后推')
   assert.equal(
     extendFastForward(2000, first),
-    2000 + FAST_FORWARD.windowMs,
-    '算出来更晚就继续往后推 —— 这正是"按住"能持续快进的原因',
+    2000 + FAST_FORWARD.holdGraceMs,
+    '算出来更晚就继续往后推',
+  )
+})
+
+test('isFastForwarding：按住期间为真，松手（到期时刻置 0）立刻为假', () => {
+  const until = extendFastForward(1000, 0)
+
+  assert.equal(isFastForwarding(1000, until), true, '刚按下')
+  assert.equal(isFastForwarding(until - 1, until), true, '还没到期')
+  assert.equal(isFastForwarding(until, until), false, '到期即为假（左闭右开）')
+  assert.equal(isFastForwarding(999999, until), false, '过了安全网会自己停，不会永远快进')
+
+  // 这条是这次修的要害：松手必须**立刻**结束，不能靠等定时器 ——
+  // 靠定时器就等于把"按住"寄托在键盘自动重复上。
+  assert.equal(isFastForwarding(1000, 0), false, 'keyup 置 0 之后立刻为假')
+})
+
+test('安全网必须显著长于自动重复的首延迟，否则按住会被自己的安全网掐断', () => {
+  assert.ok(
+    FAST_FORWARD.holdGraceMs >= 2000,
+    `自动重复的首延迟各系统可达 1s，安全网只有 ${FAST_FORWARD.holdGraceMs}ms 会中途停顿`,
+  )
+})
+
+test('快进倍率足以"甩开"输出速度：一秒至少十几行', () => {
+  // 一行按 30 字算：正常 18 字/秒 ≈ 0.6 行/秒。用户反馈 12 倍（≈6 行/秒）"还是没那么快"。
+  const slots = typingSchedule([{ chars: 30 }], 0, DEFAULT_TEMPO)
+  const msPerLine = scheduleDuration(slots)
+  const linesPerSecond = (1000 / msPerLine) * FAST_FORWARD.rate
+
+  assert.ok(
+    linesPerSecond >= 15,
+    `按住快进一秒只有 ${linesPerSecond.toFixed(1)} 行 —— 快进的意义是甩开输出速度，不是略快一点`,
   )
 })
 
@@ -172,7 +207,9 @@ test('advanceClock：不快进就是实时，快进按倍率走', () => {
 test('advanceClock：单调不减、不为负、不越过分章结尾', () => {
   assert.equal(advanceClock(500, 50, false, 10000), 550, '正常递增')
   assert.equal(advanceClock(500, -100, false, 10000), 500, '负数步长也不倒退')
-  assert.equal(advanceClock(100, 50, true, 1000), 700, '快进不会跳出 duration')
+  // 用显式倍率，免得这条断言绑死在 FAST_FORWARD.rate 的具体数值上。
+  assert.equal(advanceClock(100, 50, true, 1000, 3), 250, '快进不会跳出 duration')
+  assert.equal(advanceClock(100, 50, true, 1000, 100), 1000, '倍率再大也封顶在 duration')
   assert.equal(advanceClock(9900, 50, true, 10000), 10000, '正好封顶在 duration')
   assert.equal(advanceClock(0, 50, true, 0), 0, '空章节不越界')
 })
@@ -188,7 +225,7 @@ test('快进仍然逐字：它把时钟提前，而不是一次性把全章吐�
   const duration = scheduleDuration(slots)
   const totalChars = slots[slots.length - 1].endChars
 
-  // 一个 tick（100ms）里：不快进是正常速度，快进走 12 倍。
+  // 一个 tick（100ms）里：不快进是正常速度，快进按 rate 倍走。
   const slow = charsAt(slots, advanceClock(0, 100, false, duration))
   const fast = charsAt(slots, advanceClock(0, 100, true, duration))
 

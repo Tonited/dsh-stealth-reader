@@ -9,15 +9,22 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 
 import {
+  SESSION_ID_SLOT,
   SNAPSHOT_READER,
+  bindingEntries,
   collectSnippets,
+  currentSessionEntries,
   extractExcerpts,
   extractText,
   hasRows,
   looksSuspicious,
+  noteSessionId,
+  notedSessionId,
   readSnapshot,
   redact,
+  resetSessionIdForTest,
   seenEventKinds,
+  sessionCandidates,
   summarize,
   summarizeToolCalls,
 } from '../src/client/readers.ts'
@@ -165,4 +172,125 @@ test('片段收集：脱敏、拒绝可疑内容、限长限量', () => {
   for (const snippet of collectSnippets(entries, 3)) {
     assert.ok(snippet.length <= 60)
   }
+})
+
+// ---------------------------------------------------------------- 「当前会话」
+
+// 为什么这一组必须存在：0.1.7 的 `SessionListState` 里**没有** `current`
+// （`dsh-api-session-controller/lib/types/client/sessions/service.d.ts:43-52` 只有
+// ids/byId/phase/projectionsBySession），旧写法永远退化成 `ids[0]`；
+// 而 `sessions.binding(id)` 只对**已经被 retain 的会话**返回 binding
+// （`…/contract/sessions.d.ts:146-153`）。猜错 id 的代价是伪装内容退化成硬编码模板
+// —— 违反 ADR-0002，且**没有任何报错**。所以这里把兜底顺序钉成断言。
+
+/** 一个会话列表快照；`mainView` 为真的行表示"主视图正开着它"。 */
+const listState = (rows) => ({
+  ids: rows.map((row) => row.id),
+  byId: Object.fromEntries(
+    rows.map((row) => [row.id, { id: row.id, retainedBy: { mainView: row.mainView ? 1 : 0 } }]),
+  ),
+  phase: 'ready',
+  projectionsBySession: {},
+})
+
+const list = (rows) => ({ getSnapshot: () => listState(rows) })
+
+const eventEntry = (text) => ({
+  type: 'event',
+  event: { type: 'assistant/message', data: { message: { content: [{ text }] } } },
+})
+
+/** 只有「被 retain 过」的会话才拿得到 binding —— 逐字复刻契约语义。 */
+const sessionsOf = (retained) => ({
+  list: list([
+    { id: 's0', mainView: false },
+    { id: 's1', mainView: true },
+    { id: 's2', mainView: false },
+  ]),
+  binding: (id) => (Object.hasOwn(retained, id) ? { eventSource: { getSnapshot: () => ({ entries: retained[id] }) } } : undefined),
+})
+
+test('当前会话：候选顺序 = 探针 id → 主视图 retain → 列表顺序', () => {
+  const state = listState([
+    { id: 's0', mainView: false },
+    { id: 's1', mainView: true },
+    { id: 's2', mainView: false },
+  ])
+
+  assert.deepEqual(sessionCandidates(state), ['s1', 's0', 's2'], '没有探针 id 时先给主视图那个')
+  assert.deepEqual(sessionCandidates(state, 's2'), ['s2', 's1', 's0'], '探针 id 排最前')
+  assert.deepEqual(sessionCandidates(state, 's1'), ['s1', 's0', 's2'], '不许重复')
+  assert.deepEqual(sessionCandidates(state, ''), ['s1', 's0', 's2'], '空串不算 id')
+  assert.deepEqual(sessionCandidates(undefined), [], '快照拿不到时不虚构 id')
+})
+
+/** 事件窗口里的第一段正文（断言用）。 */
+const textOf = (entries) => entries[0]?.event?.data?.message?.content?.[0]?.text
+
+test('当前会话：探针抓到的真实 sessionId 优先（不是 ids[0]）', () => {
+  const sessions = sessionsOf({ s0: [eventEntry('列表首行')], s2: [eventEntry('真正在看的那个')] })
+
+  // s0 同样拿得到 binding：不用探针时它才是最早命中的那个。
+  assert.equal(textOf(currentSessionEntries(sessions)), '列表首行')
+  assert.equal(textOf(currentSessionEntries(sessions, 's2')), '真正在看的那个')
+})
+
+test('当前会话：没有探针 id 时优先主视图 retain 的那个', () => {
+  const sessions = sessionsOf({ s0: [eventEntry('列表首行')], s1: [eventEntry('主视图')] })
+
+  // s1 在 ids 里排第二，但它是"主视图正开着"的那个 —— 旧版 `state.current` 的语义。
+  assert.equal(textOf(currentSessionEntries(sessions)), '主视图')
+})
+
+test('当前会话：拿不到 binding 时退到"其它 id 里第一个能拿到的"', () => {
+  const sessions = sessionsOf({ s0: [eventEntry('兜底')] })
+
+  // 探针说 s2，但 s2 没被 retain（binding 返回 undefined）→ 退到 s0。
+  const entries = currentSessionEntries(sessions, 's2')
+  assert.equal(entries.length, 1)
+  assert.equal(entries[0].event.data.message.content[0].text, '兜底')
+
+  // 读取路径是契约路径：binding(id).eventSource.getSnapshot().entries
+  assert.equal(bindingEntries(sessions, 's2').length, 0, '没被 retain 的会话拿不到 binding')
+  assert.equal(bindingEntries(sessions, 's0').length, 1)
+  assert.deepEqual(bindingEntries(sessions, '不存在'), [])
+})
+
+test('当前会话：一层都拿不到时返回空表（由调用方退回硬编码模板）', () => {
+  const sessions = sessionsOf({})
+  assert.deepEqual(currentSessionEntries(sessions, 's2'), [])
+  assert.deepEqual(currentSessionEntries(sessions), [])
+  // 空窗口也算"拿不到"：不能因为 binding 存在就把调用方钉在一个空壳上
+  assert.deepEqual(currentSessionEntries(sessionsOf({ s0: [] }), 's0'), [])
+  // 异形/缺失的服务一律降级，不抛
+  assert.deepEqual(currentSessionEntries(undefined, 's0'), [])
+  assert.deepEqual(currentSessionEntries({}, 's0'), [])
+  assert.deepEqual(
+    currentSessionEntries({ list: () => { throw new Error('boom') } }, 's0'),
+    [],
+    '读取期异常必须被吞掉（热替换与宿主刷新都可能出现半初始化状态）',
+  )
+})
+
+test('当前会话 id 槽位：存活在 globalThis 上（热替换后新旧模块看同一份）', () => {
+  resetSessionIdForTest()
+  assert.equal(notedSessionId(), undefined, '先清干净，避免用例之间互相影响')
+
+  noteSessionId('session-abc')
+  assert.equal(notedSessionId(), 'session-abc')
+  // 关键：槽位必须在 globalThis 上 —— 热替换后读取方是另一份模块实例，
+  // 模块级变量会重演 store.ts 注释里"改在了另一个宇宙"的故障。
+  assert.equal(globalThis[SESSION_ID_SLOT], 'session-abc')
+
+  noteSessionId('session-def')
+  assert.equal(notedSessionId(), 'session-def', '换会话要跟着变')
+
+  // 非字符串 / 空串不代表"没有当前会话"，不许把已知值擦掉
+  noteSessionId(undefined)
+  noteSessionId('')
+  noteSessionId(42)
+  assert.equal(notedSessionId(), 'session-def')
+
+  resetSessionIdForTest()
+  assert.equal(notedSessionId(), undefined)
 })

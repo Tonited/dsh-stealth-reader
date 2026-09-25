@@ -47,6 +47,21 @@ DSH 的消息流里没有"章节标题"这种东西。
 **没有"书页模式"。** 衬线字体 + 居中 + 大留白的排版一眼就是小说阅读器，那本身就是最大的暴露面。
 所以只有一种形态：伪装成日志流的正文。
 
+## 兼容性：DSH 0.1.7 适配（0.2.0）
+
+0.1.7 改了客户端插件与基线原语的几处契约，本插件按**实际安装产物**逐条对齐
+（不是按文档 —— 有一处官方 `.d.ts` 注释至今还写着与运行时代码矛盾的说法）。
+改动与物证都写在源码注释和 [CHANGELOG](CHANGELOG.md) 里，这里只列最容易踩的四个：
+
+| 契约 | 0.1.7 的实际形态 | 不改会怎样 |
+| --- | --- | --- |
+| `MarkdownText` / `DisclosureRow` | 是 `React.memo(...)` 的产物，`typeof` 为 `'object'`（`$$typeof` = `Symbol(react.memo)`） | 用 `typeof x === 'function'` 判存在性会把它们判成"基线没有这个原语"，整条渲染路径**静默**降级 |
+| `MarkdownText.labels` | 可选 → **必填**，且渲染器无保护解引用 | 正文里一旦出现代码块或脚注就 TypeError，那一段阅读流整条消失（只在特定章节复现） |
+| 当前会话 id | `SessionListState` **没有** `current` 字段；`sessions.binding(id)` 只对已 retain 的会话有效 | 拿不到真实会话事件流，伪装内容会退化成硬编码模板（违反 ADR-0002） |
+| 图标名 | `Icon…Outline14` / `Outline16` → `Icon…OutlineRegular` / `Medium` | 旧名在 0.1.7 里一个都不存在，图标全部消失 |
+
+插件对旧版 DSH 仍然可用：图标走「新名 → 旧名」降级链，`labels` 兜底只在缺失时生效。
+
 ## 安装
 
 需要 DeepSeek Harness 的 `dsh` CLI，以及一个启用了 Web 客户端的 profile（下面以 `web` 为例）。

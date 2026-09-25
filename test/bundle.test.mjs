@@ -46,6 +46,9 @@ async function loadClientBundle() {
     if (specifier === '@deepseek-ai/dsh-client-ui-primitives') {
       // 复用 DSH 自己的组件（DisclosureRow / StateDot / MarkdownText）能让伪装层
       // 像素级一致；这里只提供最小替身，用于断言"产物确实会去 require 它"。
+      //
+      // 图标刻意只给**旧名**：这模拟的是"旧版 DSH"，顺带钉住产物里的降级链
+      // （0.1.7 的新名 → 旧名 → 自绘，见 primitives.ts 的 pickIcon）。
       const primitives = {
         DisclosureRow: () => null,
         StateDot: () => null,
@@ -445,3 +448,77 @@ test('H3b：热替换（重复 apply）后按键仍然生效，且监听器不�
   win.pressHotkey()
   assert.equal(storeMode(sandbox), 'stream', '热替换后快捷键必须照样能用')
 })
+
+// ------------------------------------------------- 0.1.7 适配：当前会话 / 图标
+
+test('S4：会话探针把框架给的 sessionId 记到全局槽位', async () => {
+  const { plugin, sandbox } = await loadClientBundle()
+
+  const registrations = []
+  const ctx = {
+    slots: {
+      inject: (key, callback) => callback(),
+      register(options, render) {
+        registrations.push({ options, render })
+        return () => {}
+      },
+    },
+  }
+  plugin.apply(ctx)
+
+  const probe = registrations.find((row) => row.options.name === 'conversation.input.dock')
+  assert.ok(probe, '缺少定位探针条目')
+
+  // 0.1.7 的 session 作用域槽会把框架解析出的 sessionId 合成到组件 props 上
+  // （dsh-client-ui-renderer/lib/client.js:715-717,770-775 把 standard kit 展开成 props）。
+  probe.render({ sessionId: 'session-1' })
+  assert.equal(
+    sandbox.__STEALTH_READER_SESSION_ID__,
+    'session-1',
+    '探针必须把 sessionId 记到 globalThis 槽位 —— 0.1.7 的 SessionListState 没有 current，' +
+      '这是"当前会话是谁"唯一可靠的来源',
+  )
+
+  // 换会话时要跟着变
+  probe.render({ sessionId: 'session-2' })
+  assert.equal(sandbox.__STEALTH_READER_SESSION_ID__, 'session-2')
+
+  // 没有 props（旧版行为 / 单元测试直接调用）时不能崩，也不能把已知值擦掉
+  assert.doesNotThrow(() => probe.render())
+  assert.equal(sandbox.__STEALTH_READER_SESSION_ID__, 'session-2')
+})
+
+test('S7：产物同时带新图标名与旧图标名（新名优先、旧名兜底）', async () => {
+  const source = await readFile(resolve(ROOT, 'lib/client.js'), 'utf8')
+
+  // 0.1.7 的名字（lib/types/icons/index.d.ts 里 Outline14|Outline16 命中 0）
+  assert.ok(
+    source.includes('IconChevronRightOutlineRegular'),
+    '必须优先取 0.1.7 的新图标名，否则伪装层的折叠箭头会静默退回自绘',
+  )
+  assert.ok(
+    source.includes('IconChevronRightOutline14'),
+    '旧名必须留在候选里：插件要能同时跑在旧版 DSH 上',
+  )
+})
+
+test('S2/S6：产物带着 labels 兜底与 DisclosureRow 的 onToggle', async () => {
+  const source = await readFile(resolve(ROOT, 'lib/client.js'), 'utf8')
+  // esbuild 的 charset 默认是 ascii：非 ASCII 字面量在产物里是 `\u590D\u5236…` 这种转义。
+  // 断言前先解回来，否则测试会因为构建器的编码选项而误报（与代码行为无关）。
+  const decoded = decodeUnicodeEscapes(source)
+
+  // S2：0.1.7 的 MarkdownText 必填 labels，缺了就是"正文里一出现代码块/脚注就 TypeError"。
+  // 兜底文案必须真的打进产物，否则这层兜底等于不存在。
+  assert.ok(decoded.includes('复制成功'), '兜底 labels 必须打进产物')
+  assert.ok(decoded.includes('取消自动换行'), '工具栏文案同样要在产物里')
+  // S6：0.1.7 的 DisclosureRowProps.onToggle 是必填。
+  assert.ok(source.includes('onToggle'), 'DisclosureRow 的调用点必须带 onToggle')
+})
+
+/** 把 `\uXXXX` 转义还原成字符（只用于断言，不参与任何运行时逻辑）。 */
+function decodeUnicodeEscapes(text) {
+  return text.replace(/\\u([0-9a-fA-F]{4})/g, (_match, hex) =>
+    String.fromCharCode(Number.parseInt(hex, 16)),
+  )
+}

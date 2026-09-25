@@ -148,29 +148,47 @@ export function charsAt(slots: readonly LineSlot[], elapsedMs: number): number {
  * 露馅：那不像 AI 在输出，像有人在翻页。
  */
 export const FAST_FORWARD = {
-  /** 快进期间虚拟时钟走多快。 */
-  rate: 12,
   /**
-   * 一次按键让快进持续多久。
+   * 快进期间虚拟时钟走多快。
    *
-   * 键盘自动重复会不断刷新它，所以"按住"就等于持续快进；同时它让**点一下**
-   * 也能拿到一整段快进 —— 点一下快进一小段，按住就一直快。
+   * 40 倍 ≈ 每秒二十多行（一行按 30 字算）。最初定的 12 倍实测只有每秒六行多，
+   * 用户反馈"按住还是没那么快" —— 快进的意义是**甩开输出速度**让人能跳着看，
+   * 而不是比正常略快一点。
    */
-  windowMs: 600,
+  rate: 40,
+  /**
+   * 没收到 keyup 时的安全网。
+   *
+   * 正常按住时键盘自动重复会不断刷新它，所以这个值只影响"keyup 丢了"的情形
+   * （切走窗口、按键被系统吞掉）。别调小：那会让不带自动重复的环境半路停下。
+   */
+  holdGraceMs: 3000,
 }
 
 /**
- * 收到一次快进按键之后，快进应该持续到哪个时刻。
+ * 收到一次快进 keydown 之后的到期时刻。
  *
  * 取 `max` 而不是直接覆盖：自动重复只应该把到期时刻往后推，不该因为某次重复
- * 来得早而缩短已经承诺出去的那一段。
+ * 来得早而削短已经承诺出去的那一段。
  */
 export function extendFastForward(
   now: number,
   currentUntil: number,
-  windowMs = FAST_FORWARD.windowMs,
+  graceMs = FAST_FORWARD.holdGraceMs,
 ): number {
-  return Math.max(currentUntil, now + windowMs)
+  return Math.max(currentUntil, now + graceMs)
+}
+
+/**
+ * 现在是否处于快进中。
+ *
+ * 松手时把到期时刻置 0（见 reading.tsx 的 keyup 监听），于是这里立刻为假 ——
+ * 快进的**结束不依赖定时器**，而是依赖真实的松手事件。这一点是要害：早先的版本
+ * 靠"多久没按键"结束，那等于把"按住"寄托在键盘自动重复上，而自动重复的首延迟
+ * 与速率因系统而异，按住会时快时慢。
+ */
+export function isFastForwarding(now: number, until: number): boolean {
+  return now < until
 }
 
 /**

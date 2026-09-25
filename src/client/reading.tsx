@@ -26,14 +26,29 @@ import {
   readingRatio,
   restoreRevealed,
 } from './scroll.ts'
-import { advanceClock, charsAt, extendFastForward, scheduleDuration, typingSchedule } from './typing.ts'
-import { getPrimitives } from './primitives.ts'
+import {
+  advanceClock,
+  charsAt,
+  extendFastForward,
+  isFastForwarding,
+  scheduleDuration,
+  typingSchedule,
+} from './typing.ts'
+import { getPrimitives, pickIcon } from './primitives.ts'
 import { PLACEHOLDER, splitImagePlaceholders } from './richtext.ts'
 import type { BookRecord, ChapterImageRecord, ChapterRecord, ProgressRecord } from './storage.ts'
 import * as store from './store.ts'
 import { weaveStream, type StreamLine } from './stream.ts'
 
 const Z_OVERLAY = 2147483000
+
+/**
+ * 稳定的空函数。
+ *
+ * 用途是填那些"类型上必填、语义上不该被调用"的回调（目前只有 DisclosureRow 的 `onToggle`）。
+ * 写成模块级常量而不是内联箭头：DisclosureRow 是 `memo` 的，回调每帧换新对象会让浅比较失效。
+ */
+const noop = (): void => {}
 
 /** 进度回写节流：输出进度变化时不要每个 tick 都写库。 */
 const PROGRESS_THROTTLE_MS = 800
@@ -487,10 +502,18 @@ function ToolRow({
 
   if (prim?.DisclosureRow) {
     // 失败的调用行：行首换成红色状态点（实测行为）。
+    // 折叠箭头：新名（0.1.7 的 `…OutlineRegular` / `…OutlineMedium`）优先，旧名（`…Outline14`）兜底，
+    // 全都没有就自绘 —— 见 primitives.ts 的 pickIcon 与 dsh-primitives.d.ts 的改名物证。
+    const chevron = pickIcon(
+      prim,
+      'IconChevronRightOutlineRegular',
+      'IconChevronRightOutlineMedium',
+      'IconChevronRightOutline14',
+    )
     const icon =
       failed && prim.StateDot
         ? React.createElement(prim.StateDot, { state: 'error' })
-        : React.createElement(prim.IconChevronRightOutline14 ?? LeadingIcon, { size: 14 })
+        : React.createElement(chevron ?? LeadingIcon, { size: 14 })
 
     return React.createElement(prim.DisclosureRow, {
       icon,
@@ -506,6 +529,13 @@ function ToolRow({
       // 不展开：展开态会露出"里面到底是什么"，而我们并没有一个真实的调用可以展开。
       expandable: false,
       open: false,
+      // 0.1.7 的 DisclosureRowProps 里 `onToggle: () => void` 是**必填**
+      // （`dsh-client-ui-primitives/lib/types/DisclosureRow.d.ts:8`）。`expandable: false` 时
+      // 实现算出的 `rowExpands = expandable && expandOnRowClick` 为假，onToggle 从不会被调用
+      // （`lib/index.js:3053-3061`：onClick / onKeyDown / leading 的 <button> 都挂在 rowExpands 上），
+      // 所以今天不传也不崩 —— 但那是"靠一个 prop 的值兜住"的脆弱状态：谁把 expandable 改成 true 就立刻崩。
+      // 传一个空函数是诚实的：这一行本来就不可展开。
+      onToggle: noop,
     })
   }
 
@@ -545,6 +575,9 @@ function ProseLine({
   const prim = getPrimitives()
   const hasImages = text.includes(PLACEHOLDER) || (images?.length ?? 0) > 0
 
+  // 刻意**不**在这里传 `labels`：调用点只关心"渲染一段正文"，而 0.1.7 起 labels 是必填、
+  // 渲染器又是无保护解引用（`context.labels.code` / `context.labels.footnotes`）。
+  // 缺失与畸形一律由 primitives.ts 的 withSafeLabels() 补成安全值 —— 版本差异收在那一层。
   const content = !hasImages && prim?.MarkdownText
     ? React.createElement(prim.MarkdownText, { text, streaming: false })
     : React.createElement(ProseBlock, { text, images })
@@ -787,7 +820,7 @@ function StreamBody({
     let last = Date.now()
     const timer = window.setInterval(() => {
       const now = Date.now()
-      elapsed = advanceClock(elapsed, now - last, now < fastUntilRef.current, duration)
+      elapsed = advanceClock(elapsed, now - last, isFastForwarding(now, fastUntilRef.current), duration)
       last = now
       setRevealed(charsAt(schedule, elapsed))
       if (elapsed >= duration) window.clearInterval(timer)
@@ -877,7 +910,7 @@ function StreamBody({
       }
 
       // 快进：只把虚拟时钟推快，不动已输出的字数（见 typing.ts 的 advanceClock）。
-      // 自动重复会不断刷新到期时刻，所以按住就是持续快进。
+      // 到期时刻由 keyup 结束；自动重复只在这里把它往后推，当安全网的刷新源。
       if (action === 'fastForward') {
         fastUntilRef.current = extendFastForward(Date.now(), fastUntilRef.current)
         return
@@ -899,8 +932,23 @@ function StreamBody({
       onChapter(next)
     }
 
+    // 松手立刻结束快进。
+    //
+    // 用 keyup 而不是"多久没按键"：只有 keyup 真的知道手松开了。靠超时结束的话，
+    // "按住"就寄托在键盘自动重复上 —— 而自动重复的首延迟（各系统 250–1000ms 不等）
+    // 与速率都不一样，按住会时快时慢。自动重复在这里降级成安全网的刷新源。
+    const onKeyUp = (event: KeyboardEvent) => {
+      if (event.code === 'ArrowDown' || event.code === 'ArrowRight' || event.key === 'Shift') {
+        fastUntilRef.current = 0
+      }
+    }
+
     window.addEventListener('keydown', onKeyDown, true)
-    return () => window.removeEventListener('keydown', onKeyDown, true)
+    window.addEventListener('keyup', onKeyUp, true)
+    return () => {
+      window.removeEventListener('keydown', onKeyDown, true)
+      window.removeEventListener('keyup', onKeyUp, true)
+    }
   }, [book.chapterCount, chapterIndex, covered, currentRatio, onChapter, onToggleList, saveProgress])
 
   const visible = React.useMemo(() => revealLines(lines, revealed), [lines, revealed])

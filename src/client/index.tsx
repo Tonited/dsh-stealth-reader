@@ -13,7 +13,7 @@ import { dialogueFromEntries, type DialogueLine } from './dialogue.ts'
 import { resolveInteraction } from './keys.ts'
 import { AppProvider, StreamView } from './reading.tsx'
 import { Overlay } from './modes.tsx'
-import { readSnapshot } from './readers.ts'
+import { currentSessionEntries, noteSessionId, notedSessionId } from './readers.ts'
 import * as storage from './storage.ts'
 import { importFile as runImport } from './library.ts'
 import * as store from './store.ts'
@@ -86,20 +86,15 @@ function bindKeys(): void {
 }
 
 // ------------------------------------------------------------------ 会话数据
-
-function currentSessionEntries(sessions: any): readonly any[] {
-  try {
-    const state = readSnapshot(sessions?.list)
-    const ids: string[] = state?.ids ?? []
-    const current: string | undefined = state?.current
-    const id = current && ids.includes(current) ? current : ids[0]
-    if (!id) return []
-    const binding = sessions?.binding?.(id)
-    return binding?.eventSource?.getSnapshot?.()?.entries ?? []
-  } catch {
-    return []
-  }
-}
+//
+// 「当前会话是谁」这个问题在 0.1.7 里**没有现成答案**：
+//   - 旧写法 `sessions.list.getSnapshot().current` 在 0.1.7 永远是 undefined
+//     （`SessionListState` 只有 ids/byId/phase/projectionsBySession，
+//      `dsh-api-session-controller/lib/types/client/sessions/service.d.ts:43-52`），
+//     于是静默退化成"列表首行"——而首行未必是当前会话；
+//   - 拿不到 binding 就取不到事件窗口，伪装内容会退化成硬编码模板（违反 ADR-0002）。
+// 所以 id 由下面的 session 作用域探针提供，兜底顺序与实现全部在 readers.ts 里
+// （`sessionCandidates` / `currentSessionEntries`，纯函数、可单测）。
 
 // ------------------------------------------------------------------ 插件
 
@@ -136,7 +131,7 @@ function apply(ctx: any): void {
   // 而"进入内容流时快照一次"这条约定（ADR-0002）就废了 —— 更糟的是，那会让伪装内容
   // 跟着真实操作跳动，反而更容易露馅。
   const readDialogue = (): DialogueLine[] => {
-    const real = dialogueFromEntries(currentSessionEntries(state.sessions))
+    const real = dialogueFromEntries(currentSessionEntries(state.sessions, notedSessionId()))
     if (real.length > 0) return real
 
     // 没有真实会话可借用时退回通用模板：屏幕上绝不能空着（空比假更可疑）。
@@ -164,11 +159,21 @@ function apply(ctx: any): void {
   // 一个"会话区内部"的 DOM 锚点，让 reading.tsx 从它向上量出主区矩形（见 region.ts）。
   //
   // 注意不能用 `display: none`：那样元素没有布局盒，祖先链虽在却量不出有效矩形。
+  //
+  // 它顺带承担第二件事：**报告当前会话 id**。这个槽位是 session 作用域
+  // （`dsh-client-ui-conversation/lib/types/client/contract/slots.d.ts:213-218` 的
+  // `'conversation.input.dock': { kind: 'list'; scope: 'session' }`），
+  // 而 session 作用域的组件会拿到框架合成的标准 prop `sessionId`
+  // （赋值来源 `dsh-client-ui-session/lib/client.js:124,128`，展开点
+  // `dsh-client-ui-renderer/lib/client.js:715-717,771-776`），
+  // 就是 0.1.7 里唯一"框架亲口说的当前会话"（旧版靠 `state.current`，已不存在）。
   ctx.slots.inject('conversation.input.dock', () => {
     const dispose = ctx.slots.register(
       { name: 'conversation.input.dock', id: 'stealth-reader-probe', order: 100 },
-      () =>
-        React.createElement('div', {
+      (props: any) => {
+        // 渲染期写入：只有真正在屏幕上的那个会话会走到这里，换会话时 props 变、值跟着变。
+        noteSessionId(props?.sessionId)
+        return React.createElement('div', {
           'data-stealth-reader': 'probe',
           style: {
             position: 'absolute',
@@ -177,7 +182,8 @@ function apply(ctx: any): void {
             visibility: 'hidden',
             pointerEvents: 'none',
           },
-        }),
+        })
+      },
     )
     return typeof dispose === 'function' ? dispose : () => dispose?.dispose?.()
   })

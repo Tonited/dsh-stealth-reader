@@ -34,6 +34,125 @@ export function summarize(state: any, limit = 5): Array<{ id: string; title: str
   }))
 }
 
+// ------------------------------------------------------------------ 「当前会话」
+
+/**
+ * 「当前会话」探针槽位。
+ *
+ * 为什么要一个全局槽位，而不是模块级变量：客户端插件会被 HMR **热替换**，
+ * 写入方（index.tsx 注册在 session 作用域槽 `conversation.input.dock` 上的探针组件）
+ * 和读取方（`readDialogue` 的闭包）**可能不是同一次模块实例**。模块级变量会重演
+ * store.ts 注释里那个故障：值写进了"另一个宇宙"。槽位在 globalThis 上，新旧模块看到同一份。
+ *
+ * 0.1.7 里这个 id 只能这样拿：`SessionListState` 只有
+ * `{ ids, byId, phase, projectionsBySession }`（`dsh-api-session-controller/lib/types/client/sessions/service.d.ts:43-52`），
+ * **没有 `current` 字段** —— 旧写法 `state.current` 永远是 undefined。
+ * 而 session 作用域槽的组件会拿到框架合成的标准 prop `sessionId`
+ * （类型：`dsh-client-ui-slots/lib/types/index.d.ts:191-217,222` 的
+ * `SessionStandardProps.sessionId` → `ScopeStandardProps` → `PropsRuntime`；
+ * 运行时的赋值来源：`dsh-client-ui-session/lib/client.js:124,128`
+ * 「`props: ["sessionId"]` / `props: { sessionId: binding.sessionId }`」→ `:378-397` 的
+ * `materialize()` 把 descriptor 声明的 prop 拷进 binding，
+ * 再由 `dsh-client-ui-renderer/lib/client.js:715-717,771-776` 把 standard kit 展开成组件 props）。
+ */
+export const SESSION_ID_SLOT = '__STEALTH_READER_SESSION_ID__'
+
+function slots(): Record<string, unknown> {
+  return globalThis as unknown as Record<string, unknown>
+}
+
+/**
+ * 记下探针看到的当前会话 id。
+ *
+ * 只接受非空字符串，且**不清除**已有值：宿主没给 prop（异形版本、session-maybe 场景、
+ * 单元测试直接调用组件）时不该把已知的会话 id 擦掉 —— 宁可用一个稍旧的 id
+ * （它至少是真会话），也不要退回"列表首行"。
+ */
+export function noteSessionId(id: unknown): void {
+  if (typeof id === 'string' && id.length > 0) slots()[SESSION_ID_SLOT] = id
+}
+
+/** 读探针记下的当前会话 id；从没记过就返回 undefined。 */
+export function notedSessionId(): string | undefined {
+  const id = slots()[SESSION_ID_SLOT]
+  return typeof id === 'string' && id.length > 0 ? id : undefined
+}
+
+/** 仅测试用：清掉槽位。 */
+export function resetSessionIdForTest(): void {
+  delete slots()[SESSION_ID_SLOT]
+}
+
+/**
+ * 候选会话 id 的顺序（越靠前越像「当前会话」）。
+ *
+ * 0.1.7 没有现成的「当前会话」字段，只能按可靠度分层拼：
+ *
+ *   1. `preferred` —— 探针从 session 作用域槽的 `sessionId` prop 上抓到的**真实**会话。
+ *      这是唯一"框架亲口告诉你"的来源，见 `SESSION_ID_SLOT`。
+ *   2. 被主视图 retain 的那一个 —— 官方 ui-session 自己就是这么定义"当前会话"的
+ *      （`dsh-client-ui-session/lib/client.js:283`：
+ *      `Object.values(byId).find((candidate) => (candidate.retainedBy.mainView ?? 0) > 0)?.id`；
+ *      `retainedBy` 就在列表行上：`…/sessions/service.d.ts:29` 的 `SessionSummary.retainedBy`）。
+ *      旧版的 `state.current` 语义正是"主视图那个会话"，这一层是它最贴近的替身。
+ *   3. 其余按宿主列表顺序（`state.ids`）。
+ *
+ * 为什么要排这么多层：`ISessions.binding(id)` **只对已经被 retain 的会话**返回 binding
+ * （`…/contract/sessions.d.ts:146-153`：Borrow an already-retained Session binding without
+ * extending its lifetime … undefined without a retained generation），所以猜错 id 是常态，
+ * 而 id 猜错的代价是"伪装内容退化成硬编码模板"（违反 ADR-0002）。
+ */
+export function sessionCandidates(state: any, preferred?: string): string[] {
+  const ids: string[] = Array.isArray(state?.ids) ? state.ids : []
+  const byId: Record<string, any> = state?.byId ?? {}
+  const ordered: string[] = []
+  const push = (id: unknown): void => {
+    if (typeof id === 'string' && id.length > 0 && !ordered.includes(id)) ordered.push(id)
+  }
+
+  push(preferred)
+  for (const id of ids) if ((byId[id]?.retainedBy?.mainView ?? 0) > 0) push(id)
+  for (const id of ids) push(id)
+  return ordered
+}
+
+/**
+ * 取一个会话的事件窗口条目。
+ *
+ * 契约路径：`sessions.binding(id).eventSource.getSnapshot()`，快照形状
+ * `{ entries, hasMore, revision, change }`（`…/contract/events.d.ts:56-61,63`、`…/sessions/service.d.ts:81`）。
+ */
+export function bindingEntries(sessions: any, id: string): readonly any[] {
+  const binding = sessions?.binding?.(id)
+  return binding?.eventSource?.getSnapshot?.()?.entries ?? []
+}
+
+/**
+ * 取「真实工作痕迹」：按 `sessionCandidates` 的顺序，用第一个**真的读得到内容**的会话。
+ *
+ * 三层降级，每一层都比上一层弱：
+ *   1. 真实 sessionId 的 binding；
+ *   2. 其它 id 里第一个能拿到 binding（且窗口非空）的 —— 只为"至少是真实历史"，
+ *      哪怕它未必是屏幕上正在看的那个会话（ADR-0002 只要求"取自真实会话历史，不是合成日志"）；
+ *   3. 都没有 → 返回空表，由调用方退回硬编码模板（index.tsx 的 `DEFAULT_TEMPLATES`）。
+ *
+ * @param sessions - `ctx.sessions`（形状未完全文档化，故一律容错）。
+ * @param preferred - 探针抓到的当前会话 id（`notedSessionId()`）。
+ * @returns 事件条目；一层都拿不到时是空表（**不是**异常）。
+ */
+export function currentSessionEntries(sessions: any, preferred?: string): readonly any[] {
+  try {
+    const state = readSnapshot(sessions?.list)
+    for (const id of sessionCandidates(state, preferred)) {
+      const entries = bindingEntries(sessions, id)
+      if (entries.length > 0) return entries
+    }
+    return []
+  } catch {
+    return []
+  }
+}
+
 /** 一条事件窗口里可读文本的提取结果。 */
 export interface Excerpt {
   kind: string

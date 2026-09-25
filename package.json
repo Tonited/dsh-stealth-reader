@@ -1,6 +1,6 @@
 {
   "name": "dsh-stealth-reader",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "DeepSeek Harness 客户端插件：把 txt/epub 小说与真实会话痕迹逐行交错成日志流，鼠标一动即回到工作界面。",
   "license": "MIT",
   "type": "module",
@@ -60,8 +60,8 @@
     "watch": "node build.mjs --watch",
     "deploy": "node deploy.mjs",
     "typecheck": "tsc --noEmit",
-    "test": "node --test",
-    "check": "tsc --noEmit && node build.mjs && node --test"
+    "test": "node --test test/*.test.mjs",
+    "check": "tsc --noEmit && node build.mjs && node --test test/*.test.mjs"
   },
   "devDependencies": {
     "@types/node": "^24.13.6",
